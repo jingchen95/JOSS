@@ -20,12 +20,15 @@
 #include "xitao_api.h"
 using namespace xitao;
 
-float Synth_MatMul::time_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float Synth_MatCopy::time_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float Synth_MatStencil::time_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float Synth_MatMul::power_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float Synth_MatCopy::power_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float Synth_MatStencil::power_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float Synth_MatMul::time_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float Synth_MatCopy::time_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float Synth_MatStencil::time_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float Synth_MatMul::cpu_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float Synth_MatCopy::cpu_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float Synth_MatStencil::cpu_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float Synth_MatMul::ddr_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float Synth_MatCopy::ddr_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float Synth_MatStencil::ddr_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
 uint64_t Synth_MatMul::cycle_table[NUMFREQ][NUMSOCKETS][XITAO_MAXTHREADS];
 uint64_t Synth_MatCopy::cycle_table[NUMFREQ][NUMSOCKETS][XITAO_MAXTHREADS];
 uint64_t Synth_MatStencil::cycle_table[NUMFREQ][NUMSOCKETS][XITAO_MAXTHREADS];
@@ -41,9 +44,12 @@ bool Synth_MatStencil::best_config_state;
 bool Synth_MatMul::enable_freq_change;
 bool Synth_MatCopy::enable_freq_change;
 bool Synth_MatStencil::enable_freq_change;
-int Synth_MatMul::best_freqindex;
-int Synth_MatCopy::best_freqindex;
-int Synth_MatStencil::best_freqindex;
+int Synth_MatMul::best_cpufreqindex;
+int Synth_MatCopy::best_cpufreqindex;
+int Synth_MatStencil::best_cpufreqindex;
+int Synth_MatMul::best_ddrfreqindex;
+int Synth_MatCopy::best_ddrfreqindex;
+int Synth_MatStencil::best_ddrfreqindex;
 int Synth_MatMul::best_cluster;
 int Synth_MatCopy::best_cluster;
 int Synth_MatStencil::best_cluster;

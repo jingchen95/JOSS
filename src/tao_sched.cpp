@@ -57,7 +57,9 @@ int current_freq;
 int freq_index;
 long cur_freq[NUMSOCKETS] = {2035200, 2035200}; /*starting frequency is 2.04GHz for both clusters */
 int cur_freq_index[NUMSOCKETS] = {0,0};
+int cur_ddr_freq_index = 0;
 long avail_freq[NUM_AVAIL_FREQ] = {2035200, 1881600, 1728000, 1574400, 1420800, 1267200, 1113600, 960000, 806400, 652800, 499200, 345600};
+long avail_ddr_freq[NUM_DDR_AVAIL_FREQ] = {1866000000, 1600000000, 1331200000, 1062400000, 800000000};
 int num_width[NUMSOCKETS] = {2, 3};
 int ptt_freq_index[NUMSOCKETS] = {0};
 // int PTT_UpdateFinish[NUMSOCKETS][XITAO_MAXTHREADS][XITAO_MAXTHREADS] = {0};
@@ -94,7 +96,7 @@ float memory_bound_power[NUMSOCKETS][XITAO_MAXTHREADS] = {0.0};
 float cache_intensive_power[NUMSOCKETS][XITAO_MAXTHREADS] = {0.0};
 #else
 float runtime_power[10][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS] = {0.0}; // TX2 Power Profiles: 10 groups by memory-boundness level
-float idle_power[NUM_AVAIL_FREQ][NUMSOCKETS] = {0.0};
+float idle_power[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS] = {0.0};
 #endif
 
 struct timespec tim, tim2;
@@ -195,7 +197,7 @@ int gotao_init_hw( int nthr, int thrb, int nhwc)
   
   /* 2021 Oct 02: Read Power Profile File, including idle and dynamic power */
   std::ifstream infile, infile1;
-  infile1.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2/TX2_idle.txt"); /* Step 1: Read idle power */
+  infile1.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2/TX2_idle.txt"); /* Step 1: Read idle power */
   if(infile1.fail()){
     std::cout << "Failed to open power profile file!" << std::endl;
     std::cin.get();
@@ -205,14 +207,18 @@ int gotao_init_hw( int nthr, int thrb, int nhwc)
   while(std::getline(infile1, token1)) {
     std::istringstream line(token1);
     int ii = 0; // Column index of power files
-    int freq = 0; // Frequency Index ranging from 0 to 11
-    float idlep = 0;
+    int ddrfreq = 0;  // DDR Frequency Index ranging from 0 to 4
+    int cpufreq = 0; // CPU Frequency Index ranging from 0 to 11
     while(line >> token1) {
       if(ii == 0){
-        freq = stoi(token1); // first column is frequency index
-      }else{
-        idlep = stof(token1);
-        idle_power[freq][ii-1] = idlep; 
+        ddrfreq = stoi(token1); // first column is DDR frequency index
+      }
+      if(ii == 1){
+        cpufreq = stoi(token1); // Second column is CPU frequency index
+      }      
+      if(ii > 1){
+        float idlep = stof(token1);
+        idle_power[ddrfreq][cpufreq][ii-2] = idlep;  // Third and fourth columns are the idle power of Denver and A57 clusters
       }
       ii++;
     }
@@ -221,7 +227,7 @@ int gotao_init_hw( int nthr, int thrb, int nhwc)
 
   for(int mb_bound = 0; mb_bound < 10; mb_bound++){ /* Step 2: Read runtime power */
     char address[100] = {'\0'};
-    sprintf(address, "/home/nvidia/Work_1/EAS/PowerProfile/TX2/TX2_%d_%d.txt", mb_bound, mb_bound+1);
+    sprintf(address, "/home/nvidia/Work_1/Paper3/PowerProfile/TX2/TX2_%d_%d.txt", mb_bound, mb_bound+1);
     // std::cout << "Trying to open file " << address << "...\n";
     // FILE * files = fopen(address, "r");
     // if (files == NULL) {
@@ -300,7 +306,7 @@ int gotao_init_hw( int nthr, int thrb, int nhwc)
 
 #if (defined DVFS) && (defined TX2)
 // Needs to find out the task type ??????
-  infile.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_DVFS_MM");
+  infile.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_DVFS_MM");
   if(infile.fail()){
     std::cout << "Failed to open power profile file!" << std::endl;
     std::cin.get();
@@ -343,7 +349,7 @@ int gotao_init_hw( int nthr, int thrb, int nhwc)
   //   }
   // }
 
-  infile1.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_DVFS_CP");
+  infile1.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_DVFS_CP");
   if(infile1.fail()){
     std::cout << "Failed to open power profile file!" << std::endl;
     std::cin.get();
@@ -388,7 +394,7 @@ int gotao_init_hw( int nthr, int thrb, int nhwc)
 
 #elif (defined CATA)
   // Denver Frequency: 2035200, A57 Frequency: 1113600
-  infile.open("/home/nvidia/Work_1/EAS/PowerProfile/COMP_CATA.txt");
+  infile.open("/home/nvidia/Work_1/Paper3/PowerProfile/COMP_CATA.txt");
   std::string token;
   while(std::getline(infile, token)) {
     std::istringstream line(token);
@@ -416,7 +422,7 @@ int gotao_init_hw( int nthr, int thrb, int nhwc)
 #if (defined DynaDVFS)
   std::string token;
   // Compute-bound Power Models
-  infile.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MAXMAX_MatMul.txt");
+  infile.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MAXMAX_MatMul.txt");
   while(std::getline(infile, token)) {
     std::istringstream line(token);
     int ii = 0;
@@ -432,7 +438,7 @@ int gotao_init_hw( int nthr, int thrb, int nhwc)
       ii++;
     }
   }
-  infile1.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MINMIN_MatMul.txt");
+  infile1.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MINMIN_MatMul.txt");
   while(std::getline(infile1, token)) {
     std::istringstream line(token);
     int ii = 0;
@@ -461,7 +467,7 @@ int gotao_init_hw( int nthr, int thrb, int nhwc)
     }
   }
   // Memory-bound Power Models
-  infile.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MAXMAX_Copy.txt");
+  infile.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MAXMAX_Copy.txt");
   while(std::getline(infile, token)) {
     std::istringstream line(token);
     int ii = 0;
@@ -477,7 +483,7 @@ int gotao_init_hw( int nthr, int thrb, int nhwc)
       ii++;
     }
   }
-  infile1.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MINMIN_Copy.txt");
+  infile1.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MINMIN_Copy.txt");
   while(std::getline(infile1, token)) {
     std::istringstream line(token);
     int ii = 0;
@@ -506,7 +512,7 @@ int gotao_init_hw( int nthr, int thrb, int nhwc)
     }
   }
   // Cache-intensive Power Models
-  infile.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MAXMAX_Stencil.txt");
+  infile.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MAXMAX_Stencil.txt");
   while(std::getline(infile, token)) {
     std::istringstream line(token);
     int ii = 0;
@@ -522,7 +528,7 @@ int gotao_init_hw( int nthr, int thrb, int nhwc)
       ii++;
     }
   }
-  infile1.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MINMIN_Stencil.txt");
+  infile1.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MINMIN_Stencil.txt");
   while(std::getline(infile1, token)) {
     std::istringstream line(token);
     int ii = 0;
@@ -552,24 +558,24 @@ int gotao_init_hw( int nthr, int thrb, int nhwc)
   }
 #else
   if(denver_freq == 0 && a57_freq == 0){
-    infile.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MAXMAX_MatMul.txt");
-    infile1.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MAXMAX_Copy.txt");
-    infile2.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MAXMAX_Stencil.txt");
+    infile.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MAXMAX_MatMul.txt");
+    infile1.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MAXMAX_Copy.txt");
+    infile2.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MAXMAX_Stencil.txt");
   }
   if(denver_freq == 1 && a57_freq == 0){
-    infile.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MINMAX_MatMul.txt");
-    infile1.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MINMAX_Copy.txt");
-    infile2.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MINMAX_Stencil.txt");
+    infile.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MINMAX_MatMul.txt");
+    infile1.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MINMAX_Copy.txt");
+    infile2.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MINMAX_Stencil.txt");
   }
   if(denver_freq == 0 && a57_freq == 1){
-    infile.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MAXMIN_MatMul.txt");
-    infile1.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MAXMIN_Copy.txt");
-    infile2.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MAXMIN_Stencil.txt");
+    infile.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MAXMIN_MatMul.txt");
+    infile1.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MAXMIN_Copy.txt");
+    infile2.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MAXMIN_Stencil.txt");
   }
   if(denver_freq == 1 && a57_freq == 1){
-    infile.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MINMIN_MatMul.txt");
-    infile1.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MINMIN_Copy.txt");
-    infile2.open("/home/nvidia/Work_1/EAS/PowerProfile/TX2_MINMIN_Stencil.txt");
+    infile.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MINMIN_MatMul.txt");
+    infile1.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MINMIN_Copy.txt");
+    infile2.open("/home/nvidia/Work_1/Paper3/PowerProfile/TX2_MINMIN_Stencil.txt");
   }
   if(infile.fail() || infile1.fail() || infile2.fail()){
     std::cout << "Failed to open power profile file!" << std::endl;
@@ -1154,7 +1160,7 @@ int worker_loop(int nthread){
                   std::cout << "[DEBUG] The pointing task *it is also a same type + fine-grained task as the assembly task. consecutive_fine_grained = " << consecutive_fine_grained << std::endl;
                   LOCK_RELEASE(output_lck);
 #endif 
-                  if(consecutive_fine_grained * assembly->get_timetable(cur_freq_index[best_cluster], best_cluster, best_width-1) * (end_coreid[best_cluster] - start_coreid[best_cluster]) / best_width > FINE_GRAIN_THRESHOLD){
+                  if(consecutive_fine_grained * assembly->get_timetable(cur_ddr_freq_index, cur_freq_index[best_cluster], best_cluster, best_width-1) * (end_coreid[best_cluster] - start_coreid[best_cluster]) / best_width > FINE_GRAIN_THRESHOLD){
                     // find out the best frequency here
 #ifdef DEBUG
                     LOCK_ACQUIRE(output_lck);
@@ -1170,42 +1176,46 @@ int worker_loop(int nthread){
                     std::cout << "[DEBUG] Number of active cores in cluster " << 1-best_cluster << ": " << sum_cluster_active << ". status[0] = " << status[0] \
                     << ", status[1] = " << status[1] << ", status[2] = " << status[2] << ", status[3] = " << status[3] << ", status[4] = " << status[4] << ", status[5] = " << status[5] << std::endl;
                     LOCK_RELEASE(output_lck);
-#endif 
-                    for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
-                      if(sum_cluster_active == 0){ /* the number of active cores is zero in another cluster */
-                        idleP_cluster = idle_power[freq_indx][best_cluster] + idle_power[freq_indx][1-best_cluster]; /* Then equals idle power of whole chip */
+#endif
+                    for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){
+                      for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
+                        if(sum_cluster_active == 0){ /* the number of active cores is zero in another cluster */
+                          idleP_cluster = idle_power[ddr_freq_indx][freq_indx][best_cluster] + idle_power[ddr_freq_indx][freq_indx][1-best_cluster]; /* Then equals idle power of whole chip */
 #ifdef DEBUG
-                        LOCK_ACQUIRE(output_lck);
-                        std::cout << "[DEBUG] Cluster " << 1-best_cluster << " no active cores. Therefore, the idle power of cluster " << best_cluster << " euqals the idle power of whole chip " << idleP_cluster << std::endl;
-                        LOCK_RELEASE(output_lck);
+                          LOCK_ACQUIRE(output_lck);
+                          std::cout << "[DEBUG] Cluster " << 1-best_cluster << " no active cores. Therefore, the idle power of cluster " << best_cluster << " euqals the idle power of whole chip " << idleP_cluster << std::endl;
+                          LOCK_RELEASE(output_lck);
 #endif 
-                      }else{
-                        idleP_cluster = idle_power[freq_indx][best_cluster]; /* otherwise, equals idle power of the cluster */
+                        }else{
+                          idleP_cluster = idle_power[ddr_freq_indx][freq_indx][best_cluster]; /* otherwise, equals idle power of the cluster */
 #ifdef DEBUG
-                        LOCK_ACQUIRE(output_lck);
-                        std::cout << "[DEBUG] Cluster " << 1-best_cluster << " has active cores. Therefore, the idle power of cluster " << best_cluster << " euqals the idle power of the cluster itself " << idleP_cluster << std::endl;
-                        LOCK_RELEASE(output_lck);
+                          LOCK_ACQUIRE(output_lck);
+                          std::cout << "[DEBUG] Cluster " << 1-best_cluster << " has active cores. Therefore, the idle power of cluster " << best_cluster << " euqals the idle power of the cluster itself " << idleP_cluster << std::endl;
+                          LOCK_RELEASE(output_lck);
 #endif 
-                      }
-                      sum_cluster_active = (sum_cluster_active < best_width)? best_width : sum_cluster_active;
-                      float idleP = idleP_cluster * best_width / sum_cluster_active;
-                      float runtimeP = assembly->get_powertable(freq_indx, best_cluster, best_width-1);
-                      float timeP = assembly->get_timetable(freq_indx, best_cluster, best_width-1);
-                      energy_pred = timeP * (runtimeP + idleP); /* assembly->get_powertable() is only the prediction for runtime power. */
+                        }
+                        sum_cluster_active = (sum_cluster_active < best_width)? best_width : sum_cluster_active;
+                        float idleP = idleP_cluster * best_width / sum_cluster_active;
+                        float CPUPowerP = assembly->get_cpupowertable(ddr_freq_indx, freq_indx, best_cluster, best_width-1);
+                        float DDRPowerP = assembly->get_ddrpowertable(ddr_freq_indx, freq_indx, best_cluster, best_width-1);
+                        float timeP = assembly->get_timetable(ddr_freq_indx, freq_indx, best_cluster, best_width-1);
+                        energy_pred = timeP * (CPUPowerP - idleP_cluster + idleP + DDRPowerP); 
 // #ifdef DEBUG
-                      LOCK_ACQUIRE(output_lck);
-                      std::cout << "[DEBUG] For the fine-grained tasks, frequency: " << avail_freq[freq_indx] << " on cluster " << best_cluster << " with width "<< best_width << ", idle power " << idleP << ", runtime power " \
-                      << runtimeP << ", execution time " << timeP << ", energy prediction: " << energy_pred << std::endl;
-                      LOCK_RELEASE(output_lck);
+                        LOCK_ACQUIRE(output_lck);
+                        std::cout << "[DEBUG] For the fine-grained tasks, Memory frequency: " << avail_ddr_freq[ddr_freq_indx] <<  ", CPU frequency: " << avail_freq[freq_indx] << " on cluster " << best_cluster << " with width "<< best_width \
+                        << ", CPU power " << CPUPowerP- idleP_cluster + idleP << ", Memory power " << DDRPowerP << ", execution time " << timeP << ", energy prediction: " << energy_pred << std::endl;
+                        LOCK_RELEASE(output_lck);
 // #endif 
-                      if(energy_pred < shortest_exec){
-                        shortest_exec = energy_pred;
-                        assembly->set_best_freq(freq_indx);
+                        if(energy_pred < shortest_exec){
+                          shortest_exec = energy_pred;
+                          assembly->set_best_cpu_freq(freq_indx);
+                          assembly->set_best_ddr_freq(ddr_freq_indx);
+                        }
                       }
                     }
 // #ifdef DEBUG
                     LOCK_ACQUIRE(output_lck);
-                    std::cout << "[DEBUG] For the fine-grained tasks, get the optimal frequency: " << avail_freq[assembly->get_best_freq()] << std::endl;
+                    std::cout << "[DEBUG] For the fine-grained tasks, get the optimal CPU and Memory frequency: " << avail_freq[assembly->get_best_cpu_freq()] << ", " << avail_ddr_freq[assembly->get_best_ddr_freq()] << std::endl;
                     LOCK_RELEASE(output_lck);
 // #endif 
                     goto consecutive_true; // No more searching
@@ -1226,49 +1236,49 @@ int worker_loop(int nthread){
           
           /*Tune frequency if required != current, for both fine-grained and coarse-grained tasks */
           if(assembly->get_enable_freq_change() == true){ /* Allow to do frequency tuning for the tasks */
-            assembly->bestfreq = avail_freq[assembly->get_best_freq()];
+            assembly->best_cpu_freq = avail_freq[assembly->get_best_cpu_freq()];
 #ifdef DEBUG
             LOCK_ACQUIRE(output_lck);
             std::cout << "[DEBUG] " << assembly->kernel_name << " task " << assembly->taskid << " is allowed to do frequency scaling. \n";
             LOCK_RELEASE(output_lck);
 #endif
 #ifndef FineStrategyTest /* The aim is to test energy difference when the DVFS is also applied to fine-grained tasks, need to enable #define threshold 0.0001 in include/config.h */
-            if(assembly->bestfreq != cur_freq[best_cluster]){ /* check if the required frequency equals the current frequency! */
+            if(assembly->best_cpu_freq != cur_freq[best_cluster]){ /* check if the required frequency equals the current frequency! */
 #ifdef DEBUG
               LOCK_ACQUIRE(output_lck);
-              std::cout << "[DEBUG] For " << assembly->kernel_name << " task " << assembly->taskid << ": current frequency " << cur_freq[best_cluster] << " != required frequency " << assembly->bestfreq << ". \n";
+              std::cout << "[DEBUG] For " << assembly->kernel_name << " task " << assembly->taskid << ": current frequency " << cur_freq[best_cluster] << " != required frequency " << assembly->best_cpu_freq << ". \n";
               LOCK_RELEASE(output_lck);
 #endif
 #else
 #ifdef DEBUG
               LOCK_ACQUIRE(output_lck);
-              std::cout << "[DVFSforFineGrained] For " << assembly->kernel_name << " task " << assembly->taskid << ": current frequency " << cur_freq[best_cluster] << ", required frequency " << assembly->bestfreq << ". \n";
+              std::cout << "[DVFSforFineGrained] For " << assembly->kernel_name << " task " << assembly->taskid << ": current frequency " << cur_freq[best_cluster] << ", required frequency " << assembly->best_cpu_freq << ". \n";
               LOCK_RELEASE(output_lck);
 #endif
 #endif
               if(best_width == (end_coreid[best_cluster] - start_coreid[best_cluster])){  /* ==> Strategy for tuning the frequency: if the best width = number of cores in cluster, just change frequency! */
-                assembly->frequency_tuning(nthread, best_cluster, assembly->get_best_freq());
+                assembly->cpu_frequency_tuning(nthread, best_cluster, assembly->get_best_cpu_freq());
                 // if(best_cluster == 0){ //Denver
-                //   Denver << std::to_string(assembly->bestfreq) << std::endl;
+                //   Denver << std::to_string(assembly->best_cpu_freq) << std::endl;
                 //   /* If the other cluster is totally idle, here it should set the frequency of the other cluster to the same */
                 //   int cluster_active = std::accumulate(status_working + start_coreid[1], status_working + end_coreid[1], 0);   
                 //   if(cluster_active == 0 && cur_freq_index[1] > cur_freq_index[0]){ /* No working cores on A57 cluster and the current frequency of A57 is higher than working Denver, then tune the frequency */
-                //     ARM << std::to_string(assembly->bestfreq) << std::endl;
-                //     cur_freq[1] = assembly->bestfreq; /* Update the current frequency */
-                //     cur_freq_index[1] = assembly->get_best_freq();
+                //     ARM << std::to_string(assembly->best_cpu_freq) << std::endl;
+                //     cur_freq[1] = assembly->best_cpu_freq; /* Update the current frequency */
+                //     cur_freq_index[1] = assembly->get_best_cpu_freq();
                 //   }  
                 // }else{
-                //   ARM << std::to_string(assembly->bestfreq) << std::endl;
+                //   ARM << std::to_string(assembly->best_cpu_freq) << std::endl;
                 //   /* If the other cluster is totally idle, here it should set the frequency of the other cluster to the same */
                 //   int cluster_active = std::accumulate(status_working + start_coreid[0], status_working + end_coreid[0], 0);   
                 //   if(cluster_active == 0 && cur_freq_index[0] > cur_freq_index[1]){ /* No working cores on Denver cluster and the current frequency of Denver is higher than working A57, then tune the frequency */
-                //     Denver << std::to_string(assembly->bestfreq) << std::endl;
-                //     cur_freq[0] = assembly->bestfreq; /* Update the current frequency */
-                //     cur_freq_index[0] = assembly->get_best_freq();
+                //     Denver << std::to_string(assembly->best_cpu_freq) << std::endl;
+                //     cur_freq[0] = assembly->best_cpu_freq; /* Update the current frequency */
+                //     cur_freq_index[0] = assembly->get_best_cpu_freq();
                 //   }  
                 // }
-                // cur_freq[best_cluster] = assembly->bestfreq; /* Update the current frequency */
-                // cur_freq_index[best_cluster] = assembly->get_best_freq(); /* Update the current frequency index */
+                // cur_freq[best_cluster] = assembly->best_cpu_freq; /* Update the current frequency */
+                // cur_freq_index[best_cluster] = assembly->get_best_cpu_freq(); /* Update the current frequency index */
 #ifdef DEBUG
                 LOCK_ACQUIRE(output_lck);
                 std::cout << "[DEBUG] Best width: " << best_width << " equals the number of cores in the cluster. Change the frequency now! =====> current frequency[Denver] = " \
@@ -1278,8 +1288,8 @@ int worker_loop(int nthread){
               }else{
                 int freq_change_cluster_active = std::accumulate(status_working + start_coreid[best_cluster], status_working + end_coreid[best_cluster], 0); /* Check if there is any task running on the cluster? Yes, take the average, no, change the frequency to the required! */
                 if(freq_change_cluster_active > 0){
-                  int new_freq_index = (cur_freq_index[best_cluster] + assembly->get_best_freq()) / 2;   /* Method 1: take the average of two frequencies */
-                  assembly->frequency_tuning(nthread, best_cluster, new_freq_index);
+                  int new_freq_index = (cur_freq_index[best_cluster] + assembly->get_best_cpu_freq()) / 2;   /* Method 1: take the average of two frequencies */
+                  assembly->cpu_frequency_tuning(nthread, best_cluster, new_freq_index);
                   // if(best_cluster == 0){ //Denver
                   //   Denver << std::to_string(avail_freq[new_freq_index]) << std::endl;
                   //   /* If the other cluster is totally idle, here it should set the frequency of the other cluster to the same */
@@ -1308,28 +1318,28 @@ int worker_loop(int nthread){
                   LOCK_RELEASE(output_lck);
 #endif 
                 }else{
-                  assembly->frequency_tuning(nthread, best_cluster, assembly->get_best_freq());
+                  assembly->cpu_frequency_tuning(nthread, best_cluster, assembly->get_best_cpu_freq());
                   // if(best_cluster == 0){ //Denver
-                  //   Denver << std::to_string(assembly->bestfreq) << std::endl;
+                  //   Denver << std::to_string(assembly->best_cpu_freq) << std::endl;
                   //   /* If the other cluster is totally idle, here it should set the frequency of the other cluster to the same */
                   //   int cluster_active = std::accumulate(status_working + start_coreid[1], status_working + end_coreid[1], 0);   
                   //   if(cluster_active == 0 && cur_freq_index[1] > cur_freq_index[0]){ /* No working cores on A57 cluster and the current frequency of A57 is higher than working Denver, then tune the frequency */
-                  //     ARM << std::to_string(assembly->bestfreq) << std::endl;
-                  //     cur_freq[1] = assembly->bestfreq; /* Update the current frequency */
-                  //     cur_freq_index[1] = assembly->get_best_freq();
+                  //     ARM << std::to_string(assembly->best_cpu_freq) << std::endl;
+                  //     cur_freq[1] = assembly->best_cpu_freq; /* Update the current frequency */
+                  //     cur_freq_index[1] = assembly->get_best_cpu_freq();
                   //   }  
                   // }else{
-                  //   ARM << std::to_string(assembly->bestfreq) << std::endl;
+                  //   ARM << std::to_string(assembly->best_cpu_freq) << std::endl;
                   //   /* If the other cluster is totally idle, here it should set the frequency of the other cluster to the same */
                   //   int cluster_active = std::accumulate(status_working + start_coreid[0], status_working + end_coreid[0], 0);   
                   //   if(cluster_active == 0 && cur_freq_index[0] > cur_freq_index[1]){ /* No working cores on Denver cluster and the current frequency of Denver is higher than working A57, then tune the frequency */
-                  //     Denver << std::to_string(assembly->bestfreq) << std::endl;
-                  //     cur_freq[0] = assembly->bestfreq; /* Update the current frequency */
-                  //     cur_freq_index[0] = assembly->get_best_freq();
+                  //     Denver << std::to_string(assembly->best_cpu_freq) << std::endl;
+                  //     cur_freq[0] = assembly->best_cpu_freq; /* Update the current frequency */
+                  //     cur_freq_index[0] = assembly->get_best_cpu_freq();
                   //   }  
                   // }
-                  // cur_freq[best_cluster] = assembly->bestfreq; /* Update the current frequency */
-                  // cur_freq_index[best_cluster] = assembly->get_best_freq(); /* Update the current frequency index */
+                  // cur_freq[best_cluster] = assembly->best_cpu_freq; /* Update the current frequency */
+                  // cur_freq_index[best_cluster] = assembly->get_best_cpu_freq(); /* Update the current frequency index */
 #ifdef DEBUG
                   LOCK_ACQUIRE(output_lck);
                   std::cout << "[DEBUG] The cluster has no tasks running now! Change the frequency now! =====> current frequency[Denver] = " << cur_freq[0] << ", current frequency[A57] = " << cur_freq[1] << std::endl;
@@ -1387,17 +1397,23 @@ int worker_loop(int nthread){
 #endif
 #ifdef DEBUG
       LOCK_ACQUIRE(output_lck);
-      std::cout << "[DEBUG] Thread "<< nthread << " starts executing " << assembly->kernel_name << " task " << assembly->taskid << "......\n";
+      std::cout << "[DEBUG] Thread "<< nthread << " starts executing " << assembly->kernel_name << " task " << assembly->taskid << "!\n";
       LOCK_RELEASE(output_lck);
 #endif
       // if(Sched == 1 && nthread == assembly->leader){
-      if(Sched == 1){
+      if(Sched == 1 && assembly->start_running == false){ /* for tasks with wider width, if this is the first thread, set the start running frequency, this is meant to avoid updating the performance table when frequency changing happens between threads execution */
 #if defined Performance_Model_Cycle 
         ioctl(fd1, PERF_EVENT_IOC_RESET, PERF_IOC_FLAG_GROUP);
         ioctl(fd1, PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP);
 #endif
+        assembly->start_running = true;
         int clus_id = (nthread < START_A)? 0:1;
         assembly->start_running_freq = cur_freq[clus_id];
+#ifdef DEBUG
+        LOCK_ACQUIRE(output_lck);
+        std::cout << "[DEBUG] Task "<< assembly->taskid << " starts from frequency " << assembly->start_running_freq << ", assembly->start_running = " << assembly->start_running << "!\n";
+        LOCK_RELEASE(output_lck);
+#endif
       }
 
       std::chrono::time_point<std::chrono::system_clock> t1,t2;
@@ -1460,22 +1476,27 @@ int worker_loop(int nthread){
           if(ptt_freq_index[0] == 0){ /*2.04GHz*/ 
             if(++assembly->threads_out_tao == assembly->width){ /* All threads finished the execution */
               _final = 1;
-              float oldticks = assembly->get_timetable(0, 0, width_index);
+              float oldticks = assembly->get_timetable(0, 0, 0, width_index);
               if(assembly->width > 1){
                 assembly->temp_ticks[nthread - assembly->leader] = ticks;
                 float newticks = float(std::accumulate(std::begin(assembly->temp_ticks), std::begin(assembly->temp_ticks) + assembly->width, 0.0)) / float(assembly->width);
-                if(oldticks == 0.0f || newticks < oldticks){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
-                  assembly->set_timetable(0, 0, newticks, width_index);
+                if(oldticks == 0.0f || (newticks < oldticks && fabs(newticks - oldticks)/oldticks > 0.1)){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
+                  assembly->set_timetable(0, 0, 0, newticks, width_index);
+                }else{
+                  assembly->set_timetable(0, 0, 0, (newticks+oldticks)/2, width_index);
                 }
               }else{
-                if(oldticks == 0.0f || ticks < oldticks){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
-                  assembly->set_timetable(0, 0, ticks, width_index);
+                if(oldticks == 0.0f || (ticks < oldticks && fabs(ticks - oldticks)/oldticks > 0.1)){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
+                  assembly->set_timetable(0, 0, 0, ticks, width_index);
+                }else{
+                  assembly->set_timetable(0, 0, 0, (ticks+oldticks)/2, width_index);
                 }
               }
               assembly->increment_PTT_UpdateFinish(0, 0, width_index);
 #ifdef DEBUG
               LOCK_ACQUIRE(output_lck);
-              std::cout << "[DEBUG] _final = " << _final << ", task " << assembly->taskid << ", " << assembly->kernel_name << "->PTT_UpdateFinish[2.04GHz, Denver, width = " << assembly->width << "] = " << assembly->get_PTT_UpdateFinish(0,0, width_index) << ". Current time: " << assembly->get_timetable(0, 0, width_index) <<"\n";
+              std::cout << "[DEBUG] _final = " << _final << ", task " << assembly->taskid << ", " << assembly->kernel_name << "->PTT_UpdateFinish[1.866GHz, 2.04GHz, Denver, width = " \
+              << assembly->width << "] = " << assembly->get_PTT_UpdateFinish(0,0, width_index) << ". Current time: " << assembly->get_timetable(0, 0, 0, width_index) <<"\n";
               LOCK_RELEASE(output_lck);
 #endif
             }else{ /* Has't finished the execution */
@@ -1503,22 +1524,27 @@ int worker_loop(int nthread){
           }else{ /*1.11GHz*/
             if(++assembly->threads_out_tao == assembly->width){ /* All threads finished the execution */
               _final = 1;
-              float oldticks = assembly->get_timetable(NUM_AVAIL_FREQ/2, 0, width_index);
+              float oldticks = assembly->get_timetable(0, NUM_AVAIL_FREQ/2, 0, width_index);
               if(assembly->width > 1){
                 assembly->temp_ticks[nthread - assembly->leader] = ticks;
                 float newticks = std::accumulate(std::begin(assembly->temp_ticks), std::begin(assembly->temp_ticks) + assembly->width, 0.0) / assembly->width;
-                if(oldticks == 0.0f || newticks < oldticks){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
-                  assembly->set_timetable(NUM_AVAIL_FREQ/2, 0, newticks, width_index);
+                if(oldticks == 0.0f || (newticks < oldticks && fabs(newticks - oldticks)/oldticks > 0.1)){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
+                  assembly->set_timetable(0, NUM_AVAIL_FREQ/2, 0, newticks, width_index);
+                }else{
+                  assembly->set_timetable(0, NUM_AVAIL_FREQ/2, 0, (newticks+oldticks)/2, width_index);
                 }
               }else{
-                if(oldticks == 0.0f || ticks < oldticks){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
-                  assembly->set_timetable(NUM_AVAIL_FREQ/2, 0, ticks, width_index);
+                if(oldticks == 0.0f || (ticks < oldticks && fabs(ticks - oldticks)/oldticks > 0.1)){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
+                  assembly->set_timetable(0, NUM_AVAIL_FREQ/2, 0, ticks, width_index);
+                }else{
+                  assembly->set_timetable(0, NUM_AVAIL_FREQ/2, 0, (ticks+oldticks)/2, width_index);
                 }
               }
               assembly->increment_PTT_UpdateFinish(1, 0, width_index);
 #ifdef DEBUG
               LOCK_ACQUIRE(output_lck);
-              std::cout << "[DEBUG] _final = " << _final << ", task " << assembly->taskid << ", " << assembly->kernel_name << "->PTT_UpdateFinish[1.11GHz, Denver, width = " << assembly->width << "] = " << assembly->get_PTT_UpdateFinish(1,0, width_index) << ". Current time: " << assembly->get_timetable(NUM_AVAIL_FREQ/2, 0, width_index) <<"\n";
+              std::cout << "[DEBUG] _final = " << _final << ", task " << assembly->taskid << ", " << assembly->kernel_name << "->PTT_UpdateFinish[1.866GHz, 1.11GHz, Denver, width = " \
+               << assembly->width << "] = " << assembly->get_PTT_UpdateFinish(1,0, width_index) << ". Current time: " << assembly->get_timetable(0, NUM_AVAIL_FREQ/2, 0, width_index) <<"\n";
               LOCK_RELEASE(output_lck);
 #endif
             }else{ /* Has't finished the execution */
@@ -1605,7 +1631,7 @@ int worker_loop(int nthread){
             }else{ /* Current frequency is 1.11GHz */
               int ptt_check = 0;            
               for(auto&& width : ptt_layout[START_D]){ 
-                float check_ticks = assembly->get_timetable(NUM_AVAIL_FREQ/2, 0, width - 1); /* First parameter is ptt_freq_index[0] = 12/2 = 6, 1.11GHz */
+                float check_ticks = assembly->get_timetable(0, NUM_AVAIL_FREQ/2, 0, width - 1); /* First parameter is ptt_freq_index[0] = 12/2 = 6, 1.11GHz */
                 if(assembly->get_PTT_UpdateFinish(1, 0, width-1) >= NUM_TRAIN_TASKS && check_ticks > 0.0f){ /* PTT_UpdateFinish first dimention is 1 => 1.11GHz */
                   ptt_check++;
                   if(assembly->get_mbtable(0, width-1) == 0.0f){ // If the memory-boundness of this config hasn't been computed yet
@@ -1618,75 +1644,165 @@ int worker_loop(int nthread){
                     memory_boundness = a/b;
 #endif
 #if defined Performance_Model_Time                   /* Method 2: Calculate Memory-boundness (using execution time only) = ((T2f2/T1)-f1) / (f2-f1) */
-                    float highest_ticks = assembly->get_timetable(0, 0, width - 1);
+                    float highest_ticks = assembly->get_timetable(0, 0, 0, width - 1);
                     float a = float(avail_freq[0]) / float(avail_freq[NUM_AVAIL_FREQ/2]);
                     float b = check_ticks / highest_ticks;
                     memory_boundness = (b-a) / (1-a);
                     LOCK_ACQUIRE(output_lck);
                     std::cout << assembly->kernel_name << ": Memory-boundness Calculation (Denver, width " << width << ") = " << memory_boundness << ". a = " << a << ", b = " << b << std::endl;
                     LOCK_RELEASE(output_lck);
-#endif
-                    assembly->set_mbtable(0, memory_boundness, width-1); /*first parameter: cluster 0 - Denver, second parameter: update value, third value: width_index */
+#endif                    
                     if(memory_boundness > 1){
                       LOCK_ACQUIRE(output_lck);
                       std::cout << "[Warning]" << assembly->kernel_name << "->Memory-boundness (Denver) is greater than 1!" << std::endl;
                       LOCK_RELEASE(output_lck);
                       memory_boundness = 1;
-                      for(int freq_indx = 1; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
+                    }else{
+                      if(memory_boundness <= 0){ /* Execution time and power prediction according to the computed memory-boundness level */
+                        LOCK_ACQUIRE(output_lck);
+                        std::cout << "[Warning]" << assembly->kernel_name << "->Memory-boundness (Denver) is smaller than 0!" << std::endl;
+                        LOCK_RELEASE(output_lck);
+                        memory_boundness = 0.0001;
+                      }
+                    }
+                    assembly->set_mbtable(0, memory_boundness, width-1); /*first parameter: cluster 0 - Denver, second parameter: update value, third value: width_index */
+                    // std::cout << "Set the MB table with the computation. Then start with the model prediction! \n"; 
+#if defined Model_Computation_Overhead
+                    std::chrono::time_point<std::chrono::system_clock> Denver_model_start;
+                    Denver_model_start = std::chrono::system_clock::now();
+                    auto Denver_model_start_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(Denver_model_start);
+                    auto Denver_model_start_epoch = Denver_model_start_ms.time_since_epoch();
+                    LOCK_ACQUIRE(output_lck);
+                    std::cout << "[Overhead] Model calculation (Denver) starts from " << Denver_model_start_epoch.count() << ". " << std::endl;
+                    LOCK_RELEASE(output_lck);
+#endif
+                    for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){ /* Compute Predictions according to Memory-boundness Values */
+                      float ddr_freq_scaling = float(avail_ddr_freq[0]) / float(avail_ddr_freq[ddr_freq_indx]);
+                      for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
+                        if((ddr_freq_indx == 0 && freq_indx == 0) || (ddr_freq_indx == 0 && freq_indx == NUM_AVAIL_FREQ/2)){ /* if DDR freq = 1.866 and CPU freq = 2.04 or 1.11 GHz, then skip since they are sampled */
+                          continue;
+                        }else{
 #if defined Performance_Model_Cycle 
                         uint64_t new_cycles = cycles_high * float(avail_freq[freq_indx])/float(avail_freq[0]);
                         float ptt_value_newfreq = float(new_cycles) / float(avail_freq[freq_indx]*1000);
+#ifdef DEBUG
+                        LOCK_ACQUIRE(output_lck);  
+                        std::cout << "[DEBUG] " << assembly->kernel_name << "->PTT_Value[1.11GHz, Denver, " << width << "] = " << check_ticks << ". Cycles(1.11GHz) = " << check_cycles << ", Cycles(2.04GHz) = " << cycles_high <<\
+                        ". Memory-boundness(Denver, width=" << width << ") = " << memory_boundness << ". ptt_check = " << ptt_check << ".\n";
+                        LOCK_RELEASE(output_lck);
+#endif
 #endif
 #if defined Performance_Model_Time
-                        float ptt_value_newfreq = highest_ticks;
+                        float ptt_value_newfreq = 0.0;
+                        float cpu_freq_scaling = float(avail_freq[0]) / float(avail_freq[freq_indx]);
+                        if(width == 1){ /*Denver, width=1*/                     
+#if defined Performance_Model_1
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 1.7250611 * memory_boundness + 0.0410749 * cpu_freq_scaling + 0.1339562 * ddr_freq_scaling - 0.2918719); 
 #endif
-                        assembly->set_timetable(freq_indx, 0, ptt_value_newfreq, width-1);
-                      }
-                      for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){ /* (2) Power value prediction */
-                          assembly->set_powertable(freq_indx, 0, runtime_power[9][freq_indx][1][width-1], width-1); 
-                      }
-                    }else{
-                      if(memory_boundness <= 0){ /* Execution time and power prediction according to the computed memory-boundness level */
-                        memory_boundness = 0.0001;
-                        for(int freq_indx = 1; freq_indx < NUM_AVAIL_FREQ; freq_indx++){ /* Fill out PTT[other freqs]. Start from 1, which is next freq after 2.04, also skip 1.11GHz*/
-                          if(freq_indx == NUM_AVAIL_FREQ/2){
-                            continue;
-                          }else{
-#if defined Performance_Model_Cycle 
-                            float ptt_value_newfreq = float(cycles_high) / float(avail_freq[freq_indx]*1000); /* (1) Execution time prediction */
+#if defined Performance_Model_2
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling - 0.3217646 * memory_boundness + 0.0777825 * cpu_freq_scaling \
+                          + 0.0979088 * ddr_freq_scaling + 0.2310173 * memory_boundness * cpu_freq_scaling + 0.9953363 * memory_boundness * ddr_freq_scaling \
+                          - 0.0447902 * cpu_freq_scaling * ddr_freq_scaling - 0.1645463);
 #endif
-#if defined Performance_Model_Time
-                            float ptt_value_newfreq = highest_ticks * (float(avail_freq[0])/float(avail_freq[freq_indx]));  /* (1) Execution time prediction */
+#if defined Performance_Model_3
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling - 0.3738012 * memory_boundness - 0.0719465 * cpu_freq_scaling \
+                          - 0.0923319 * ddr_freq_scaling + 0.1895604 * pow(memory_boundness, 2) + 0.2310173 * memory_boundness * cpu_freq_scaling \
+                          + 0.0229213 * pow(cpu_freq_scaling, 2) + 0.9953363 * memory_boundness * ddr_freq_scaling \
+                          - 0.0447902 * cpu_freq_scaling * ddr_freq_scaling + 0.0567653 * pow(ddr_freq_scaling, 2) + 0.1594567);
 #endif
-                            assembly->set_timetable(freq_indx, 0, ptt_value_newfreq, width-1);
-                          }
+// #ifdef DEBUG
+//                           LOCK_ACQUIRE(output_lck);
+//                           std::cout << "[DEBUG] " << assembly->kernel_name << "(Denver, 1): " << avail_ddr_freq[ddr_freq_indx] << ", " << avail_freq[freq_indx] << ", execution time prediction = " << ptt_value_newfreq << ".\n";
+//                           LOCK_RELEASE(output_lck);
+// #endif
                         }
-                        for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){ /* (2) Power value prediction (now memory-boundness is 0, cluster is Denver and width is known) */
-                          // for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
-                            assembly->set_powertable(freq_indx, 0, runtime_power[0][freq_indx][0][width-1], width-1); /*Power: first parameter 0 is memory-boundness index*/
-                          // }
-                        }
-                      }else{
-                        for(int freq_indx = 1; freq_indx < NUM_AVAIL_FREQ; freq_indx++){ /* (1) Execution time prediction */
-                          if(freq_indx == NUM_AVAIL_FREQ/2){
-                            continue;
-                          }else{
-#if defined Performance_Model_Cycle 
-                            uint64_t new_cycles = cycles_high * (1 - memory_boundness + memory_boundness * float(avail_freq[freq_indx])/float(avail_freq[0]));
-                            float ptt_value_newfreq = float(new_cycles) / float(avail_freq[freq_indx]*1000);
+                        if(width == 2){ /*Denver, width=2*/
+#if defined Performance_Model_1
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 2.1204276 * memory_boundness + 0.0167277 * cpu_freq_scaling + 0.0903234 * ddr_freq_scaling - 0.1620744); 
 #endif
-#if defined Performance_Model_Time
-                            float ptt_value_newfreq = highest_ticks * (memory_boundness + (1-memory_boundness) * float(avail_freq[0]) / float(avail_freq[freq_indx]));
+#if defined Performance_Model_2
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling - 1.8822725 * memory_boundness + 0.1079102 * cpu_freq_scaling \
+                          + 0.007308 * ddr_freq_scaling - 0.6263244 * memory_boundness * cpu_freq_scaling + 3.5389818 * memory_boundness * ddr_freq_scaling \
+                          - 0.039597 * cpu_freq_scaling * ddr_freq_scaling - 0.1040418);
 #endif
-                            assembly->set_timetable(freq_indx, 0, ptt_value_newfreq, width-1);
-                          }
+#if defined Performance_Model_3
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 1.1308933 * memory_boundness - 0.0018929 * cpu_freq_scaling \
+                          - 0.2420771 * ddr_freq_scaling - 30.7739177 * pow(memory_boundness, 2) - 0.6263244 * memory_boundness * cpu_freq_scaling \
+                          + 0.0168092 * pow(cpu_freq_scaling, 2) + 3.5389818 * memory_boundness * ddr_freq_scaling \
+                          - 0.039597 * cpu_freq_scaling * ddr_freq_scaling + 0.0744132 * pow(ddr_freq_scaling, 2) + 0.1485836);
+#endif
+// #ifdef DEBUG
+//                           LOCK_ACQUIRE(output_lck);
+//                           std::cout << "[DEBUG] " << assembly->kernel_name << "(Denver, 2): " << avail_ddr_freq[ddr_freq_indx] << ", " << avail_freq[freq_indx] << ", execution time prediction = " << ptt_value_newfreq << ".\n";
+//                           LOCK_RELEASE(output_lck);
+// #endif
                         }
-                        int mb_bound = floor(memory_boundness/0.1);  /* (2) Power value prediction */
-                        for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
-                          assembly->set_powertable(freq_indx, 0, runtime_power[mb_bound][freq_indx][0][width-1], width-1); 
+#endif
+                        assembly->set_timetable(ddr_freq_indx, freq_indx, 0, ptt_value_newfreq, width-1);
                         }
                       }
                     }
+                    for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){ /* (2) CPU, DDR Power value prediction */
+                      float ddrfreq = float(avail_ddr_freq[ddr_freq_indx])/1000000000.0;
+                      for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){ 
+                        float cpupower = 0.0;
+                        float ddrpower = 0.0;
+                        float cpufreq = float(avail_freq[freq_indx])/1000000.0;                        
+#if defined CPU_Power_Model_6
+                        if(width == 1){ /*Denver, width=1*/
+                          cpupower = 0.5134403 + 0.1343821 * memory_boundness - 0.3752914 * cpufreq + 0.8371783 * memory_boundness * cpufreq + 0.5086778 * pow(cpufreq, 2);
+                        }
+                        if(width == 2){ /*Denver, width=2*/
+                          cpupower = 0.6918615 + 1.2556321 * memory_boundness - 0.5476326 * cpufreq - 0.0728049 * memory_boundness * cpufreq + 0.8590242 * pow(cpufreq, 2);
+                        }
+#endif                        
+                        assembly->set_cpupowertable(ddr_freq_indx, freq_indx, 0, cpupower, width-1); 
+#if defined DDR_Power_Model_1
+                        if(width == 1){ /*Denver, width=1*/
+                          ddrpower = 4.0040504 * memory_boundness + 0.306568 * cpufreq + 0.7431409 * ddrfreq - 0.8051031;
+                        }
+                        if(width == 2){ /*Denver, width=2*/
+                          ddrpower = 26.7390709 * memory_boundness + 0.3768498 * cpufreq + 0.7559968 * ddrfreq - 1.5048697;
+                        }
+#endif  
+#if defined DDR_Power_Model_2
+                        if(width == 1){ /*Denver, width=1*/
+                          ddrpower = 2.5701454 * memory_boundness + 0.0517271 * cpufreq + 0.8294422 * ddrfreq + 1.8753657 * memory_boundness * cpufreq - 0.5995333 * memory_boundness * ddrfreq - 0.0029895* cpufreq * ddrfreq - 0.6119471;
+                        }
+                        if(width == 2){ /*Denver, width=2*/
+                          ddrpower = 15.1283833 * memory_boundness - 0.2919345 * cpufreq + 0.8707394 * ddrfreq + 13.0498892 * memory_boundness * cpufreq - 2.9460482 * memory_boundness * ddrfreq + 0.0243026 * cpufreq * ddrfreq - 0.9001091;
+                        }
+#endif
+#if defined DDR_Power_Model_3
+                        if(width == 1){ /*Denver, width=1*/
+                          ddrpower = 2.7306748 * memory_boundness + 0.1950916 * cpufreq - 1.3051822 * ddrfreq - 0.584781 * pow(memory_boundness, 2) + 1.8753657 * memory_boundness * cpufreq - 0.0602169 * pow(cpufreq, 2) \
+                          - 0.5995333 * memory_boundness * ddrfreq - 0.0029895 * cpufreq * ddrfreq + 0.8006888 * pow(ddrfreq, 2) + 0.6209039;
+                        }
+                        if(width == 2){ /*Denver, width=2*/
+                          ddrpower = 18.8701008 * memory_boundness - 0.0845603 * cpufreq - 1.0785981 * ddrfreq - 38.214727 * pow(memory_boundness, 2) + 13.0498892 * memory_boundness * cpufreq - 0.0871027 * pow(cpufreq, 2) \
+                          - 2.9460482 * memory_boundness * ddrfreq + 0.0243026 * cpufreq * ddrfreq + 0.7311884 * pow(ddrfreq, 2) + 0.1124643;
+                        }
+#endif
+#if defined DDR_Power_Model_4
+                        if(width == 1){ /*Denver, width=1*/
+                          ddrpower = 4.1645798 * memory_boundness + 0.4499325 * cpufreq - 1.3914835 * ddrfreq - 0.584781 * pow(memory_boundness, 2) - 0.0602169 * pow(cpufreq, 2) + 0.8006888 * pow(ddrfreq, 2) + 0.4277479;
+                        }
+                        if(width == 2){ /*Denver, width=2*/
+                          ddrpower = 30.4807884 * memory_boundness + 0.584224 * cpufreq - 1.1933407 * ddrfreq - 38.214727 * pow(memory_boundness, 2) - 0.0871027 * pow(cpufreq, 2) + 0.7311884 * pow(ddrfreq, 2) - 0.4922963;
+                        }
+#endif
+                        assembly->set_ddrpowertable(ddr_freq_indx, freq_indx, 0, ddrpower, width-1); 
+                      }
+                    }
+#if defined Model_Computation_Overhead
+                    std::chrono::time_point<std::chrono::system_clock> Denver_model_end;
+                    Denver_model_end = std::chrono::system_clock::now();
+                    auto Denver_model_end_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(Denver_model_end);
+                    auto Denver_model_end_epoch = Denver_model_end_ms.time_since_epoch();
+                    LOCK_ACQUIRE(output_lck);
+                    std::cout << "[Overhead] Model calculation (Denver) ends " << Denver_model_end_epoch.count() << ". " << std::endl;
+                    LOCK_RELEASE(output_lck);
+#endif
 #ifdef DEBUG
                   LOCK_ACQUIRE(output_lck);
 #if defined Performance_Model_Cycle    
@@ -1694,8 +1810,8 @@ int worker_loop(int nthread){
                   ". Memory-boundness(Denver, width=" << width << ") = " << memory_boundness << ". ptt_check = " << ptt_check << ".\n";
 #endif
 #if defined Performance_Model_Time
-                  std::cout << "[DEBUG] " << assembly->kernel_name << "->PTT_Value[2.04GHz, Denver, " << width << "] = " << highest_ticks << ", PTT_Value[1.11GHz, Denver, " << width << "] = " << check_ticks << ". Memory-boundness(Denver, width=" << width << ") = " << memory_boundness \
-                  << ". ptt_check = " << ptt_check << ".\n";
+                  std::cout << "[DEBUG] " << assembly->kernel_name << "->PTT_Value[1.866GHz, 2.04GHz, Denver, " << width << "] = " << highest_ticks << ", PTT_Value[1.866GHz, 1.11GHz, Denver, " << width << "] = " \
+                  << check_ticks << ". Memory-boundness(Denver, width=" << width << ") = " << memory_boundness << ". ptt_check = " << ptt_check << ".\n";
 #endif
                   LOCK_RELEASE(output_lck);
 #endif
@@ -1734,22 +1850,27 @@ int worker_loop(int nthread){
           if(ptt_freq_index[1] == 0){ /*2.04GHz*/
             if(++assembly->threads_out_tao == assembly->width){ /* All threads finished the execution */
               _final = 1;
-              float oldticks = assembly->get_timetable(0, 1, width_index);
+              float oldticks = assembly->get_timetable(0, 0, 1, width_index);
               if(assembly->width > 1){
                 assembly->temp_ticks[nthread - assembly->leader] = ticks;
                 float newticks = std::accumulate(std::begin(assembly->temp_ticks), std::begin(assembly->temp_ticks) + assembly->width, 0.0) / assembly->width;
-                if(oldticks == 0.0f || newticks < oldticks){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
-                  assembly->set_timetable(0, 1, newticks, width_index);
+                if(oldticks == 0.0f ||  (newticks < oldticks && fabs(newticks - oldticks)/oldticks > 0.1)){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
+                  assembly->set_timetable(0, 0, 1, newticks, width_index);
+                }else{
+                  assembly->set_timetable(0, 0, 1, (newticks+oldticks)/2, width_index);
                 }
               }else{
-                if(oldticks == 0.0f || ticks < oldticks){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
-                  assembly->set_timetable(0, 1, ticks, width_index);
+                if(oldticks == 0.0f || (ticks < oldticks && fabs(ticks - oldticks)/oldticks > 0.1)){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
+                  assembly->set_timetable(0, 0, 1, ticks, width_index);
+                }else{
+                  assembly->set_timetable(0, 0, 1, (ticks+oldticks)/2, width_index);
                 }
               }
               assembly->increment_PTT_UpdateFinish(0, 1, width_index);
 #ifdef DEBUG
               LOCK_ACQUIRE(output_lck);
-              std::cout << "[DEBUG] _final = " << _final << ", task " << assembly->taskid << ", " << assembly->kernel_name << "->PTT_UpdateFinish[2.04GHz, A57, width = " << assembly->width << "] = " << assembly->get_PTT_UpdateFinish(0,1, width_index) << ". Current time: " << assembly->get_timetable(0, 1, width_index) <<"\n";
+              std::cout << "[DEBUG] _final = " << _final << ", task " << assembly->taskid << ", " << assembly->kernel_name << "->PTT_UpdateFinish[1.866GHz, 2.04GHz, A57, width = " \
+              << assembly->width << "] = " << assembly->get_PTT_UpdateFinish(0,1, width_index) << ". Current time: " << assembly->get_timetable(0, 0, 1, width_index) <<"\n";
               LOCK_RELEASE(output_lck);
 #endif
             }else{ /* Has't finished the execution */
@@ -1773,22 +1894,27 @@ int worker_loop(int nthread){
           }else{ /*1.11GHz*/
             if(++assembly->threads_out_tao == assembly->width){ /* All threads finished the execution */
               _final = 1;
-              float oldticks = assembly->get_timetable(NUM_AVAIL_FREQ/2, 1, width_index);
+              float oldticks = assembly->get_timetable(0, NUM_AVAIL_FREQ/2, 1, width_index);
               if(assembly->width > 1){
                 assembly->temp_ticks[nthread - assembly->leader] = ticks;
                 float newticks = std::accumulate(std::begin(assembly->temp_ticks), std::begin(assembly->temp_ticks) + assembly->width, 0.0) / assembly->width;
-                if(oldticks == 0.0f || newticks < oldticks){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
-                  assembly->set_timetable(NUM_AVAIL_FREQ/2, 1, newticks, width_index);
+                if(oldticks == 0.0f || (newticks < oldticks && fabs(newticks - oldticks)/oldticks > 0.1)){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
+                  assembly->set_timetable(0, NUM_AVAIL_FREQ/2, 1, newticks, width_index);
+                }else{
+                  assembly->set_timetable(0, NUM_AVAIL_FREQ/2, 1, (newticks+oldticks)/2, width_index);
                 }
               }else{
-                if(oldticks == 0.0f || ticks < oldticks){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
-                  assembly->set_timetable(NUM_AVAIL_FREQ/2, 1, ticks, width_index);
+                if(oldticks == 0.0f || (ticks < oldticks && fabs(ticks - oldticks)/oldticks > 0.1)){   /*Only update the PTT tables when (1) the entry hasn't been trained; (2) when new execution time is smaller*/
+                  assembly->set_timetable(0, NUM_AVAIL_FREQ/2, 1, ticks, width_index);
+                }else{
+                  assembly->set_timetable(0, NUM_AVAIL_FREQ/2, 1, (ticks+oldticks)/2, width_index);
                 }
               }
               assembly->increment_PTT_UpdateFinish(1, 1, width_index);
 #ifdef DEBUG
               LOCK_ACQUIRE(output_lck);
-              std::cout << "[DEBUG] _final = " << _final << ", task " << assembly->taskid << ", " << assembly->kernel_name << "->PTT_UpdateFinish[1.11GHz, A57, width = " << assembly->width << "] = " << assembly->get_PTT_UpdateFinish(1,1, width_index) << ". Current time: " << assembly->get_timetable(NUM_AVAIL_FREQ/2, 1, width_index) <<"\n";
+              std::cout << "[DEBUG] _final = " << _final << ", task " << assembly->taskid << ", " << assembly->kernel_name << "->PTT_UpdateFinish[1.866GHz, 1.11GHz, A57, width = " \
+              << assembly->width << "] = " << assembly->get_PTT_UpdateFinish(1,1, width_index) << ". Current time: " << assembly->get_timetable(0, NUM_AVAIL_FREQ/2, 1, width_index) <<"\n";
               LOCK_RELEASE(output_lck);
 #endif
             }else{ /* Has't finished the execution */
@@ -1886,7 +2012,7 @@ int worker_loop(int nthread){
             }else{
               int ptt_check = 0; /* Step 2: Check if PTT values of A57 are filled out */
               for(auto&& width : ptt_layout[START_A]) { 
-                float check_ticks = assembly->get_timetable(NUM_AVAIL_FREQ/2, 1, width - 1);
+                float check_ticks = assembly->get_timetable(0, NUM_AVAIL_FREQ/2, 1, width - 1);
                 if(check_ticks > 0.0f && assembly->get_PTT_UpdateFinish(1, 1, width-1) >=NUM_TRAIN_TASKS){
                   ptt_check++;
                   if(assembly->get_mbtable(1, width-1) == 0.0f){
@@ -1899,7 +2025,7 @@ int worker_loop(int nthread){
                     memory_boundness = a/b;
 #endif
 #if defined Performance_Model_Time
-                    float highest_ticks = assembly->get_timetable(0, 1, width - 1);
+                    float highest_ticks = assembly->get_timetable(0, 0, 1, width - 1);
                     float a = float(avail_freq[0]) / float(avail_freq[NUM_AVAIL_FREQ/2]);
                     float b = check_ticks / highest_ticks;
                     memory_boundness = (b-a) / (1-a);
@@ -1907,68 +2033,229 @@ int worker_loop(int nthread){
                     std::cout << assembly->kernel_name << ": Memory-boundness Calculation (A57, width " << width << ") = " << memory_boundness << ". a = " << a << ", b = " << b << std::endl;
                     LOCK_RELEASE(output_lck);
 #endif
-                    assembly->set_mbtable(1, memory_boundness, width-1); /*first parameter: cluster 0 - Denver, second parameter: update value, third value: width_index */
                     if(memory_boundness > 1){
                       LOCK_ACQUIRE(output_lck);
                       std::cout << "[Warning] Memory-boundness Calculation (A57) is greater than 1!" << std::endl;
                       LOCK_RELEASE(output_lck);
                       memory_boundness = 1;
-                      for(int freq_indx = 1; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
+                    }else{
+                      if(memory_boundness <= 0){ /* Execution time and power prediction according to the computed memory-boundness level */
+                        memory_boundness = 0.0001;
+                      }
+                    }
+                    assembly->set_mbtable(1, memory_boundness, width-1); /*first parameter: cluster 0 - Denver, second parameter: update value, third value: width_index */
+#if defined Model_Computation_Overhead
+                    std::chrono::time_point<std::chrono::system_clock> A57_model_start;
+                    A57_model_start = std::chrono::system_clock::now();
+                    auto A57_model_start_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(A57_model_start);
+                    auto A57_model_start_epoch = A57_model_start_ms.time_since_epoch();
+                    LOCK_ACQUIRE(output_lck);
+                    std::cout << "[Overhead] Model calculation (A57) starts from " << A57_model_start_epoch.count() << ". " << std::endl;
+                    LOCK_RELEASE(output_lck);
+#endif
+                    for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){ /* Compute Predictions according to Memory-boundness Values */
+                      for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
+                        if((ddr_freq_indx == 0 && freq_indx == 0) || (ddr_freq_indx == 0 && freq_indx == NUM_AVAIL_FREQ/2)){ /* if DDR freq = 1.866 and CPU freq = 2.04 or 1.11 GHz, then skip */
+                          continue;
+                        }else{
 #if defined Performance_Model_Cycle 
                         uint64_t new_cycles = cycles_high * float(avail_freq[freq_indx])/float(avail_freq[0]);
                         float ptt_value_newfreq = float(new_cycles) / float(avail_freq[freq_indx]*1000);
 #endif
 #if defined Performance_Model_Time
-                        float ptt_value_newfreq = highest_ticks;
+                        float ptt_value_newfreq = 0.0;
+                        float cpu_freq_scaling = float(avail_freq[0]) / float(avail_freq[freq_indx]);
+                        float ddr_freq_scaling = float(avail_ddr_freq[0]) / float(avail_ddr_freq[ddr_freq_indx]);
+                        if(width == 1){ /* A57, width=1 */                     
+#if defined Performance_Model_1
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 1.3711753 * memory_boundness + 0.0660749 * cpu_freq_scaling + 0.1744398 * ddr_freq_scaling - 0.3950029); 
 #endif
-                        assembly->set_timetable(freq_indx, 1, ptt_value_newfreq, width-1);
-                      }
-                      for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){ /* (2) Power value prediction */
-                          assembly->set_powertable(freq_indx, 1, runtime_power[9][freq_indx][1][width-1], width-1); 
-                      }
-                      // return -1;
-                    }else{
-                      if(memory_boundness <= 0){ /* Execution time and power prediction according to the computed memory-boundness level */
-                        memory_boundness = 0.0001;
-                        for(int freq_indx = 1; freq_indx < NUM_AVAIL_FREQ; freq_indx++){ /* Fill out PTT[other freqs]. Start from 1, which is next freq after 2.04, also skip 1.11GHz*/
-                          if(freq_indx == NUM_AVAIL_FREQ/2){
-                            continue;
-                          }else{
-#if defined Performance_Model_Cycle 
-                            float ptt_value_newfreq = float(cycles_high) / float(avail_freq[freq_indx]*1000); /* (1) Execution time prediction */
+#if defined Performance_Model_2
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 0.328 * memory_boundness + 0.0562 * cpu_freq_scaling \
+                          + 0.0612 * ddr_freq_scaling + 0.1358 * memory_boundness * cpu_freq_scaling + 0.4805 * memory_boundness * ddr_freq_scaling \
+                          - 0.0248 * cpu_freq_scaling * ddr_freq_scaling - 0.1133);
 #endif
-#if defined Performance_Model_Time
-                            float ptt_value_newfreq = highest_ticks * (float(avail_freq[0])/float(avail_freq[freq_indx]));  /* (1) Execution time prediction */
+#if defined Performance_Model_3
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 0.2880999 * memory_boundness - 0.0518217 * cpu_freq_scaling \
+                          + 0.0261097 * ddr_freq_scaling + 0.0563669 * pow(memory_boundness, 2) + 0.1358472 * memory_boundness * cpu_freq_scaling \
+                          + 0.0165384 * pow(cpu_freq_scaling, 2) + 0.4805453 * memory_boundness * ddr_freq_scaling \
+                          - 0.0248303 * cpu_freq_scaling * ddr_freq_scaling + 0.0104742 * pow(ddr_freq_scaling, 2) + 0.0452253);
 #endif
-                            assembly->set_timetable(freq_indx, 1, ptt_value_newfreq, width-1);
-                          }
+// #ifdef DEBUG
+//                           LOCK_ACQUIRE(output_lck);
+//                           std::cout << "[DEBUG] " << assembly->kernel_name << "(A57, 1): " << avail_ddr_freq[ddr_freq_indx] << "GHz, " << avail_freq[freq_indx] << "GHz, execution time prediction = " << ptt_value_newfreq << ".\n";
+//                           LOCK_RELEASE(output_lck);
+// #endif
                         }
-                        for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){ /* (2) Power value prediction (now memory-boundness is 0, cluster is A57 and width is known) */
-                          // for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
-                            assembly->set_powertable(freq_indx, 1, runtime_power[0][freq_indx][1][width-1], width-1); /*Power: first parameter 0 is memory-boundness index*/
-                          // }
-                        }
-                      }else{
-                        for(int freq_indx = 1; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
-                          if(freq_indx == NUM_AVAIL_FREQ/2){
-                            continue;
-                          }else{
-#if defined Performance_Model_Cycle 
-                            uint64_t new_cycles = cycles_high * (1 - memory_boundness + memory_boundness * float(avail_freq[freq_indx])/float(avail_freq[0]));
-                            float ptt_value_newfreq = float(new_cycles) / float(avail_freq[freq_indx]*1000);
+                        if(width == 2){ /* A57, width=2*/
+#if defined Performance_Model_1
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 1.3807643 * memory_boundness + 0.0538466 * cpu_freq_scaling + 0.1897099 * ddr_freq_scaling - 0.4061276);
 #endif
-#if defined Performance_Model_Time
-                            float ptt_value_newfreq = highest_ticks * (memory_boundness + (1-memory_boundness) * float(avail_freq[0]) / float(avail_freq[freq_indx]));
-#endif                         
-                            assembly->set_timetable(freq_indx, 1, ptt_value_newfreq, width-1);
-                          }
+#if defined Performance_Model_2
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 0.2873954 * memory_boundness + 0.0708212 * cpu_freq_scaling \
+                          + 0.0875247 * ddr_freq_scaling + 0.1251056 * memory_boundness * cpu_freq_scaling + 0.5291735 * memory_boundness * ddr_freq_scaling \
+                          - 0.0412743 * cpu_freq_scaling * ddr_freq_scaling - 0.1450613);
+#endif
+#if defined Performance_Model_3
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 0.2954466 * memory_boundness - 0.0591274 * cpu_freq_scaling \
+                          + 0.0076495 * ddr_freq_scaling - 0.0109684 * pow(memory_boundness, 2) + 0.1251056 * memory_boundness * cpu_freq_scaling \
+                          + 0.0198932 * pow(cpu_freq_scaling, 2) + 0.5291735 * memory_boundness * ddr_freq_scaling \
+                          - 0.0412743 * cpu_freq_scaling * ddr_freq_scaling + 0.0238337 * pow(ddr_freq_scaling, 2) + 0.0679118);
+#endif
+// #ifdef DEBUG
+//                           LOCK_ACQUIRE(output_lck);
+//                           std::cout << "[DEBUG] " << assembly->kernel_name << "(A57, 2): " << avail_ddr_freq[ddr_freq_indx] << "GHz, " << avail_freq[freq_indx] << "GHz, execution time prediction = " << ptt_value_newfreq << ".\n";
+//                           LOCK_RELEASE(output_lck);
+// #endif
                         }
-                        int mb_bound = floor(memory_boundness/0.1);  /* (2) Power value prediction */
-                        for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
-                          assembly->set_powertable(freq_indx, 1, runtime_power[mb_bound][freq_indx][1][width-1], width-1); 
+                        if(width == 4){ /* A57, width = 4*/
+#if defined Performance_Model_1
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 1.2547213 * memory_boundness + 0.0675267 * cpu_freq_scaling + 0.1870626 * ddr_freq_scaling - 0.3802896);
+#endif
+#if defined Performance_Model_2
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 0.4627277 * memory_boundness + 0.1460303 * cpu_freq_scaling \
+                          + 0.1370799 * ddr_freq_scaling + 0.0066989 * memory_boundness * cpu_freq_scaling + 0.5072814 * memory_boundness * ddr_freq_scaling \
+                          - 0.0527228 * cpu_freq_scaling * ddr_freq_scaling - 0.2986913);
+#endif
+#if defined Performance_Model_3
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 0.424071 * memory_boundness - 0.0597007 * cpu_freq_scaling \
+                          + 0.0558782 * ddr_freq_scaling + 0.0574955 * pow(memory_boundness, 2) + 0.0066989 * memory_boundness * cpu_freq_scaling \
+                          + 0.0314944 * pow(cpu_freq_scaling, 2) + 0.5072814 * memory_boundness * ddr_freq_scaling \
+                          - 0.0527228 * cpu_freq_scaling * ddr_freq_scaling + 0.0242295 * pow(ddr_freq_scaling, 2) + 0.0093365);
+#endif
+// #ifdef DEBUG
+//                           LOCK_ACQUIRE(output_lck);
+//                           std::cout << "[DEBUG] " << assembly->kernel_name << "(A57, 4): " << avail_ddr_freq[ddr_freq_indx] << "GHz, " << avail_freq[freq_indx] << "GHz, execution time prediction = " << ptt_value_newfreq << ".\n";
+//                           LOCK_RELEASE(output_lck);
+// #endif
+                        }
+#endif
+                        assembly->set_timetable(ddr_freq_indx, freq_indx, 1, ptt_value_newfreq, width-1);
                         }
                       }
                     }
+                    for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){ /* (2) Power value prediction */
+                      float ddrfreq = float(avail_ddr_freq[ddr_freq_indx])/1000000000.0;
+                      for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){ 
+                        float cpupower = 0.0;
+                        float ddrpower = 0.0;
+                        float cpufreq = float(avail_freq[freq_indx])/1000000.0;
+#if defined CPU_Power_Model_6
+                        if(width == 1){ /*A57, width=1*/
+                          cpupower = 0.3035816 + 0.1363508 * memory_boundness - 0.1067623 * cpufreq - 0.1471331 * memory_boundness * cpufreq + 0.2793643 * pow(cpufreq, 2);
+                        }
+                        if(width == 2){ /*A57, width=2*/
+                          cpupower = 0.3463124 + 0.2209002 * memory_boundness - 0.0078078 * cpufreq - 0.4175843 * memory_boundness * cpufreq + 0.3754007 * pow(cpufreq, 2);
+                        }
+                        if(width == 4){ /*A57, width=4*/
+                          cpupower = 0.4496991 + 0.287165 * memory_boundness - 0.1324573 * cpufreq - 0.5858516 * memory_boundness * cpufreq + 0.5907194 * pow(cpufreq, 2);
+                        }
+#endif                        
+                        assembly->set_cpupowertable(ddr_freq_indx, freq_indx, 1, cpupower, width-1); 
+#if defined DDR_Power_Model_1
+                        if(width == 1){ /*A57, width=1*/
+                          ddrpower = 0.9316994 * memory_boundness + 0.1218638 * cpufreq + 0.7876816 * ddrfreq - 0.6563012;
+                        }
+                        if(width == 2){ /*A57, width=2*/
+                          ddrpower = 1.2216713 * memory_boundness + 0.1532258 * cpufreq + 0.7893731 * ddrfreq - 0.7134712;
+                        }
+                        if(width == 4){ /*A57, width=4*/
+                          ddrpower = 1.2637439 * memory_boundness + 0.1509104 * cpufreq + 0.7944365 * ddrfreq - 0.7112166;
+                        }
+#endif  
+#if defined DDR_Power_Model_2
+                        if(width == 1){ /*A57, width=1*/
+                          ddrpower = 0.9138285 * memory_boundness + 0.0399894 * cpufreq + 0.8386321 * ddrfreq + 0.2044974 * memory_boundness * cpufreq - 0.1693516 * memory_boundness * ddrfreq + 0.0073483 * cpufreq * ddrfreq - 0.6383507;
+                        }
+                        if(width == 2){ /*A57, width=2*/
+                          ddrpower = 1.080931 * memory_boundness + 0.0597889 * cpufreq + 0.8335765 * ddrfreq + 0.2524553 * memory_boundness * cpufreq - 0.119964 * memory_boundness * ddrfreq + 0.0001079 * cpufreq * ddrfreq - 0.6612905;
+                        }
+                        if(width == 4){ /*A57, width=4*/
+                          ddrpower = 1.0329543 * memory_boundness + 0.0385068 * cpufreq + 0.8373515 * ddrfreq + 0.3373493 * memory_boundness * cpufreq - 0.1282292 * memory_boundness * ddrfreq - 0.0001117 * cpufreq * ddrfreq - 0.6343936;
+                        }
+#endif
+#if defined DDR_Power_Model_3
+                        if(width == 1){ /*A57, width=1*/
+                          ddrpower = 0.7957444 * memory_boundness + 0.1425522 * cpufreq - 1.6483112 * ddrfreq + 0.1669195 * pow(memory_boundness, 2) + 0.2044974 * memory_boundness * cpufreq - 0.0389682 * pow(cpufreq, 2) \
+                          - 0.1693516 * memory_boundness * ddrfreq + 0.9361233 * pow(ddrfreq, 2) + 0.8491373;
+                        }
+                        if(width == 2){ /*A57, width=2*/
+                          ddrpower = 0.8780419 * memory_boundness + 0.2063387 * cpufreq - 1.4751842 * ddrfreq + 0.2764038 * pow(memory_boundness, 2) + 0.2524553 * memory_boundness * cpufreq - 0.0615549 * pow(cpufreq, 2) \
+                          - 0.119964 * memory_boundness * ddrfreq + 0.0001079 * cpufreq * ddrfreq + 0.8660066 * pow(ddrfreq, 2) + 0.7093737;
+                        }
+                        if(width == 4){ /*A57, width=4*/
+                          ddrpower = 0.4613634 * memory_boundness + 0.133786 * cpufreq - 1.5223486 * ddrfreq + 0.8501488 * pow(memory_boundness, 2) + 0.3373493 * memory_boundness * cpufreq - 0.0400198 * pow(cpufreq, 2) \
+                          - 0.1282292 * memory_boundness * ddrfreq - 0.0001117 * cpufreq * ddrfreq + 0.8851138 * pow(ddrfreq, 2) + 0.8238755;
+                        }
+#endif
+#if defined DDR_Power_Model_4
+                        if(width == 1){ /*A57, width=1*/
+                          ddrpower = 0.8136153 * memory_boundness + 0.2146393 * cpufreq - 1.7080091 * ddrfreq + 0.1669195 * pow(memory_boundness, 2) - 0.0389682 * pow(cpufreq, 2) + 0.9361233 * pow(ddrfreq, 2) + 0.8428377;
+                        }
+                        if(width == 2){ /*A57, width=2*/
+                          ddrpower = 1.0187822 * memory_boundness + 0.2997757 * cpufreq - 1.5193876 * ddrfreq + 0.2764038 * pow(memory_boundness, 2) - 0.0615549 * pow(cpufreq, 2) + 0.8660066 * pow(ddrfreq, 2) + 0.657193;
+                        }
+                        if(width == 4){ /*A57, width=4*/
+                          ddrpower = 0.692153 * memory_boundness + 0.2461896 * cpufreq - 1.5652636 * ddrfreq + 0.8501488 * pow(memory_boundness, 2) - 0.0400198 * pow(cpufreq, 2) + 0.8851138 * pow(ddrfreq, 2) + 0.7470525;
+                        }
+#endif
+                        assembly->set_ddrpowertable(ddr_freq_indx, freq_indx, 1, ddrpower, width-1); 
+                      }
+                    }
+#if defined Model_Computation_Overhead
+                    std::chrono::time_point<std::chrono::system_clock> A57_model_end;
+                    A57_model_end = std::chrono::system_clock::now();
+                    auto A57_model_end_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(A57_model_end);
+                    auto A57_model_end_epoch = A57_model_end_ms.time_since_epoch();
+                    LOCK_ACQUIRE(output_lck);
+                    std::cout << "[Overhead] Model calculation (A57) ends " << A57_model_end_epoch.count() << ". " << std::endl;
+                    LOCK_RELEASE(output_lck);
+#endif
+                      // return -1;
+                    
+//                     }else{
+//                       if(memory_boundness <= 0){ /* Execution time and power prediction according to the computed memory-boundness level */
+//                         memory_boundness = 0.0001;
+//                         for(int freq_indx = 1; freq_indx < NUM_AVAIL_FREQ; freq_indx++){ /* Fill out PTT[other freqs]. Start from 1, which is next freq after 2.04, also skip 1.11GHz*/
+//                           if(freq_indx == NUM_AVAIL_FREQ/2){
+//                             continue;
+//                           }else{
+// #if defined Performance_Model_Cycle 
+//                             float ptt_value_newfreq = float(cycles_high) / float(avail_freq[freq_indx]*1000); /* (1) Execution time prediction */
+// #endif
+// #if defined Performance_Model_Time
+//                             float ptt_value_newfreq = highest_ticks * (float(avail_freq[0])/float(avail_freq[freq_indx]));  /* (1) Execution time prediction */
+// #endif
+//                             assembly->set_timetable(freq_indx, 1, ptt_value_newfreq, width-1);
+//                           }
+//                         }
+//                         for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){ /* (2) Power value prediction (now memory-boundness is 0, cluster is A57 and width is known) */
+//                           // for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
+//                             assembly->set_powertable(freq_indx, 1, runtime_power[0][freq_indx][1][width-1], width-1); /*Power: first parameter 0 is memory-boundness index*/
+//                           // }
+//                         }
+//                       }else{
+//                         for(int freq_indx = 1; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
+//                           if(freq_indx == NUM_AVAIL_FREQ/2){
+//                             continue;
+//                           }else{
+// #if defined Performance_Model_Cycle 
+//                             uint64_t new_cycles = cycles_high * (1 - memory_boundness + memory_boundness * float(avail_freq[freq_indx])/float(avail_freq[0]));
+//                             float ptt_value_newfreq = float(new_cycles) / float(avail_freq[freq_indx]*1000);
+// #endif
+// #if defined Performance_Model_Time
+//                             // float ptt_value_newfreq = highest_ticks * (memory_boundness + (1-memory_boundness) * float(avail_freq[0]) / float(avail_freq[freq_indx])); /* No consideration of DDR frequency */
+//                             float ptt_value_newfreq = highest_ticks * /*2022 Aug 14th: consideration of CPU frequency + DDR frequency*/
+// #endif                         
+//                             assembly->set_timetable(freq_indx, 1, ptt_value_newfreq, width-1);
+//                           }
+//                         }
+//                         int mb_bound = floor(memory_boundness/0.1);  /* (2) Power value prediction */
+//                         for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
+//                           assembly->set_powertable(freq_indx, 1, runtime_power[mb_bound][freq_indx][1][width-1], width-1); 
+//                         }
+//                       }
+//                     }
 #if (defined DEBUG)
                     LOCK_ACQUIRE(output_lck);
 #if (defined Performance_Model_Cycle)
@@ -1976,7 +2263,7 @@ int worker_loop(int nthread){
                     ". Memory-boundness(A57, width=" << width << ") = " << memory_boundness << ". ptt_check = " << ptt_check << ".\n";
 #endif
 #if (defined Performance_Model_Time)
-                    std::cout << "[DEBUG] " << assembly->kernel_name << "->PTT_Value[2.04GHz, A57, " << width << "] = " << highest_ticks << ", PTT_Value[1.11GHz, A57, " << width << "] = " << check_ticks << ". Memory-boundness(A57, width=" << width << ") = " << memory_boundness \
+                    std::cout << "[DEBUG] " << assembly->kernel_name << "->PTT_Value[1.866GHz, 2.04GHz, A57, " << width << "] = " << highest_ticks << ", PTT_Value[1.866GHz, 1.11GHz, A57, " << width << "] = " << check_ticks << ". Memory-boundness(A57, width=" << width << ") = " << memory_boundness \
                     << ". ptt_check = " << ptt_check << ".\n";
 #endif
                     LOCK_RELEASE(output_lck);
@@ -2018,25 +2305,45 @@ int worker_loop(int nthread){
           LOCK_ACQUIRE(output_lck);
           std::cout << assembly->kernel_name << ": Training Phase finished. Predicted execution time and power results for the kernel tasks: \n";
           std::cout << "Execution Time Predictions: \n";
-          for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
-            std::cout << "Frequency: " << avail_freq[freq_indx] << ": " << std::endl;
-            for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
-              std::cout << "Cluster " << clus_id << ": ";
-              for(int wid = 1; wid <= 4; wid *= 2){
-                std::cout << assembly->get_timetable(freq_indx, clus_id, wid-1) << "\t";
+          for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){
+            std::cout << "Memory Frequency: " << avail_ddr_freq[ddr_freq_indx] << ": " << std::endl;
+            for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
+              std::cout << "CPU Frequency: " << avail_freq[freq_indx] << ": " << std::endl;
+              for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
+                std::cout << "Cluster " << clus_id << ": ";
+                for(int wid = 1; wid <= 4; wid *= 2){
+                  std::cout << assembly->get_timetable(ddr_freq_indx, freq_indx, clus_id, wid-1) << "\t";
+                }
+                std::cout << std::endl;
               }
-              std::cout << std::endl;
             }
           }
-          std::cout << "\nPower Predictions: \n";
-          for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
-            std::cout << "Frequency: " << avail_freq[freq_indx] << ": " << std::endl;
-            for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
-              std::cout << "Cluster " << clus_id << ": ";
-              for(int wid = 1; wid <= 4; wid *= 2){
-                std::cout << assembly->get_powertable(freq_indx, clus_id, wid-1) << "\t";
+          std::cout << "\nCPU Power Predictions: \n";
+          for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){
+            std::cout << "Memory Frequency: " << avail_ddr_freq[ddr_freq_indx] << ": " << std::endl;
+            for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
+              std::cout << "CPU Frequency: " << avail_freq[freq_indx] << ": " << std::endl;
+              for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
+                std::cout << "Cluster " << clus_id << ": ";
+                for(int wid = 1; wid <= 4; wid *= 2){
+                  std::cout << assembly->get_cpupowertable(ddr_freq_indx, freq_indx, clus_id, wid-1) << "\t";
+                }
+                std::cout << std::endl;
               }
-              std::cout << std::endl;
+            }
+          }
+          std::cout << "\nMemory Power Predictions: \n";
+          for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){
+            std::cout << "Memory Frequency: " << avail_ddr_freq[ddr_freq_indx] << ": " << std::endl;
+            for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
+              std::cout << "CPU Frequency: " << avail_freq[freq_indx] << ": " << std::endl;
+              for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
+                std::cout << "Cluster " << clus_id << ": ";
+                for(int wid = 1; wid <= 4; wid *= 2){
+                  std::cout << assembly->get_ddrpowertable(ddr_freq_indx, freq_indx, clus_id, wid-1) << "\t";
+                }
+                std::cout << std::endl;
+              }
             }
           }
           std::cout << std::endl;

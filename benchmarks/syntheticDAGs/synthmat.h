@@ -15,14 +15,16 @@
 class Synth_MatMul : public AssemblyTask 
 {
 public: 
-  static float time_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-  static float power_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+  static float time_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+  static float cpu_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+  static float ddr_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
   static uint64_t cycle_table[NUMFREQ][NUMSOCKETS][XITAO_MAXTHREADS];
   static float mb_table[NUMSOCKETS][XITAO_MAXTHREADS]; /*mb - memory-boundness */
   static bool time_table_state[NUMSOCKETS+1];
   static bool best_config_state;
   static bool enable_freq_change;
-  static int best_freqindex;
+  static int best_cpufreqindex;
+  static int best_ddrfreqindex;
   static int best_cluster;
   static int best_width;
   static std::atomic<int> PTT_UpdateFlag[NUMSOCKETS][XITAO_MAXTHREADS][XITAO_MAXTHREADS];
@@ -58,44 +60,52 @@ public:
   }
 
   /* Thread id should be te second array parameter? TBD!!! */
-  void increment_PTT_UpdateFinish(int freq_index, int clusterid, int index) {
-    PTT_UpdateFinish[freq_index][clusterid][index]++;
+  void increment_PTT_UpdateFinish(int cpu_freq_index, int clusterid, int index) {
+    PTT_UpdateFinish[cpu_freq_index][clusterid][index]++;
   }
-  float get_PTT_UpdateFinish(int freq_index, int clusterid,int index){
+  float get_PTT_UpdateFinish(int cpu_freq_index, int clusterid,int index){
     float finish = 0;
-    finish = PTT_UpdateFinish[freq_index][clusterid][index];
+    finish = PTT_UpdateFinish[cpu_freq_index][clusterid][index];
     return finish;
   }
-  void increment_PTT_UpdateFlag(int freq_index, int clusterid, int index) {
-    PTT_UpdateFlag[freq_index][clusterid][index]++;
+  void increment_PTT_UpdateFlag(int cpu_freq_index, int clusterid, int index) {
+    PTT_UpdateFlag[cpu_freq_index][clusterid][index]++;
   }
-  float get_PTT_UpdateFlag(int freq_index, int clusterid,int index){
+  float get_PTT_UpdateFlag(int cpu_freq_index, int clusterid,int index){
     float finish = 0;
-    finish = PTT_UpdateFlag[freq_index][clusterid][index];
+    finish = PTT_UpdateFlag[cpu_freq_index][clusterid][index];
     return finish;
   }
-  void set_timetable(int freq_index, int clusterid, float ticks, int index) {
-    time_table[freq_index][clusterid][index] = ticks;
+  void set_timetable(int ddr_freq_index, int cpu_freq_index, int clusterid, float ticks, int index) {
+    time_table[ddr_freq_index][cpu_freq_index][clusterid][index] = ticks;
   }
-  float get_timetable(int freq_index, int clusterid, int index) { 
-    float time=0;
-    time = time_table[freq_index][clusterid][index];
+  float get_timetable(int ddr_freq_index, int cpu_freq_index, int clusterid, int index) { 
+    float time = 0.0;
+    time = time_table[ddr_freq_index][cpu_freq_index][clusterid][index];
     return time;
   }
-  void set_powertable(int freq_index, int clusterid, float power_value, int index) {
-    power_table[freq_index][clusterid][index] = power_value;
+  void set_cpupowertable(int ddr_freq_index, int cpu_freq_index, int clusterid, float power_value, int index) {
+    cpu_power_table[ddr_freq_index][cpu_freq_index][clusterid][index] = power_value;
   }
-  float get_powertable(int freq_index, int clusterid, int index) { 
+  float get_cpupowertable(int ddr_freq_index, int cpu_freq_index, int clusterid, int index) { 
     float power_value = 0;
-    power_value = power_table[freq_index][clusterid][index];
+    power_value = cpu_power_table[ddr_freq_index][cpu_freq_index][clusterid][index];
     return power_value;
   }
-  void set_cycletable(int freq_index, int clusterid, uint64_t cycles, int index) {
-    cycle_table[freq_index][clusterid][index] = cycles;
+  void set_ddrpowertable(int ddr_freq_index, int cpu_freq_index, int clusterid, float power_value, int index) {
+    ddr_power_table[ddr_freq_index][cpu_freq_index][clusterid][index] = power_value;
   }
-  uint64_t get_cycletable(int freq_index, int clusterid, int index) { 
+  float get_ddrpowertable(int ddr_freq_index, int cpu_freq_index, int clusterid, int index) { 
+    float power_value = 0;
+    power_value = ddr_power_table[ddr_freq_index][cpu_freq_index][clusterid][index];
+    return power_value;
+  }
+  void set_cycletable(int cpu_freq_index, int clusterid, uint64_t cycles, int index) {
+    cycle_table[cpu_freq_index][clusterid][index] = cycles;
+  }
+  uint64_t get_cycletable(int cpu_freq_index, int clusterid, int index) { 
     uint64_t cycles = 0;
-    cycles = cycle_table[freq_index][clusterid][index];
+    cycles = cycle_table[cpu_freq_index][clusterid][index];
     return cycles;
   }
   void set_mbtable(int clusterid, float mem_b, int index) {
@@ -129,8 +139,11 @@ public:
   void set_enable_freq_change(bool new_state){
     enable_freq_change = new_state;
   }
-  void set_best_freq(int freq_index){
-    best_freqindex = freq_index;
+  void set_best_cpu_freq(int cpu_freq_index){
+    best_cpufreqindex = cpu_freq_index;
+  }
+  void set_best_ddr_freq(int ddr_freq_index){
+    best_ddrfreqindex = ddr_freq_index;
   }
   void set_best_cluster(int clusterid){
     best_cluster = clusterid;
@@ -138,9 +151,13 @@ public:
   void set_best_numcores(int width){
     best_width = width;
   }
-  int get_best_freq(){
-    int freq_indx = best_freqindex;
+  int get_best_cpu_freq(){
+    int freq_indx = best_cpufreqindex;
     return freq_indx;
+  }
+  int get_best_ddr_freq(){
+    int ddr_freq_indx = best_ddrfreqindex;
+    return ddr_freq_indx;
   }
   int get_best_cluster(){
     int clu_id = best_cluster;

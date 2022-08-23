@@ -43,8 +43,9 @@ public:
   int tasktype;
   // The leader task id in the resource partition
   int leader;
-  long bestfreq;
+  long best_cpu_freq;
   long start_running_freq;
+  bool start_running;
   bool granularity_fine;
   int criticality;
   int taskid;
@@ -69,10 +70,12 @@ public:
   std::atomic<int> threads_out_tao;
   int width; /*!< number of resources that this assembly uses */  
 
-  virtual float get_timetable(int freq_index, int thread, int index) = 0;
-  virtual void set_timetable(int freq_index, int thread, float t, int index) = 0;
-  virtual float get_powertable(int freq_index, int thread, int index) = 0;
-  virtual void set_powertable(int freq_index, int thread, float t, int index) = 0;
+  virtual float get_timetable(int ddr_freq_index, int freq_index, int thread, int index) = 0;
+  virtual void set_timetable(int ddr_freq_index, int freq_index, int thread, float t, int index) = 0;
+  virtual float get_cpupowertable(int ddr_freq_index, int freq_index, int thread, int index) = 0;
+  virtual void set_cpupowertable(int ddr_freq_index, int freq_index, int thread, float t, int index) = 0;
+  virtual float get_ddrpowertable(int ddr_freq_index, int freq_index, int thread, int index) = 0;
+  virtual void set_ddrpowertable(int ddr_freq_index, int freq_index, int thread, float t, int index) = 0;
   virtual void set_cycletable(int freq_index, int threadid, uint64_t cycles, int index) = 0;
   virtual uint64_t get_cycletable(int freq_index, int threadid, int index) = 0;
   virtual void set_mbtable(int threadid, float mem_b, int index) = 0;
@@ -83,10 +86,12 @@ public:
   virtual void set_bestconfig_state(bool new_state) = 0;
   virtual bool get_enable_freq_change() = 0;
   virtual void set_enable_freq_change(bool new_state) = 0;
-  virtual void set_best_freq(int freq_index) = 0;
+  virtual void set_best_cpu_freq(int freq_index) = 0;
+  virtual void set_best_ddr_freq(int ddr_freq_index) = 0;
   virtual void set_best_cluster(int clusterid) = 0;
   virtual void set_best_numcores(int width) = 0;
-  virtual int get_best_freq() = 0;
+  virtual int get_best_cpu_freq() = 0;
+  virtual int get_best_ddr_freq() = 0;
   virtual int get_best_cluster() = 0;
   virtual int get_best_numcores() = 0;
   virtual void increment_PTT_UpdateFinish(int freq_index, int clusterid, int index) = 0;
@@ -110,7 +115,8 @@ public:
   virtual int eas_width_mold(int nthread, PolyTask * it);
 #endif
   virtual int ERASE_Target_Energy_2(int nthread, PolyTask * it);
-  virtual void frequency_tuning(int nthread, int best_cluster, int freq_index);
+  virtual void cpu_frequency_tuning(int nthread, int best_cluster, int freq_index);
+  virtual void ddr_frequency_tuning(int nthread, int ddr_freq_index);
   virtual int find_best_config(int nthread, PolyTask * it);  // find out the best config for the task type by searching all possible spaces 
   virtual int update_best_config(int nthread, PolyTask * it); // update the best config for upcoming tasks
 

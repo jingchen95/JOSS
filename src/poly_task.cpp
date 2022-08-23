@@ -20,7 +20,9 @@ const int EAS_PTT_TRAIN = 0;
 extern int freq_index;
 extern long cur_freq[NUMSOCKETS];
 extern int cur_freq_index[NUMSOCKETS];
+extern int cur_ddr_freq_index;
 extern long avail_freq[NUM_AVAIL_FREQ];
+extern long avail_ddr_freq[NUM_DDR_AVAIL_FREQ];
 extern int num_width[NUMSOCKETS];
 extern int ptt_freq_index[NUMSOCKETS];
 extern bool global_training;
@@ -82,7 +84,7 @@ extern float memory_bound_power[NUMSOCKETS][XITAO_MAXTHREADS];
 extern float cache_intensive_power[NUMSOCKETS][XITAO_MAXTHREADS];
 #else
 extern float runtime_power[10][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-extern float idle_power[NUM_AVAIL_FREQ][NUMSOCKETS];
+extern float idle_power[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS];
 #endif
 
 
@@ -186,7 +188,7 @@ int PolyTask::history_mold(int _nthread, PolyTask *it){
       auto&& ptt_val = 0.0f;
 #ifdef DVFS
 #else
-      ptt_val = it->get_timetable(0, leader, width - 1);
+      ptt_val = it->get_timetable(0, 0, leader, width - 1);
 #ifdef DEBUG
       LOCK_ACQUIRE(output_lck);
       std::cout <<"[DEBUG] Priority=0, ptt value("<< leader << "," << width << ") = " << ptt_val << std::endl;
@@ -714,29 +716,34 @@ int PolyTask::ERASE_Target_EDP(int nthread, PolyTask * it){
 }
 #endif
 
-void PolyTask::frequency_tuning(int nthread, int best_cluster, int freq_index){
-  uint64_t bestfreq = avail_freq[freq_index];
+void PolyTask::cpu_frequency_tuning(int nthread, int best_cluster, int freq_index){
+  uint64_t best_cpu_freq = avail_freq[freq_index];
   if(best_cluster == 0){ //Denver
-    Denver << std::to_string(bestfreq) << std::endl;
+    Denver << std::to_string(best_cpu_freq) << std::endl;
     /* If the other cluster is totally idle, here it should set the frequency of the other cluster to the same */
     int cluster_active = std::accumulate(status_working + start_coreid[1], status_working + end_coreid[1], 0);   
     if(cluster_active == 0 && cur_freq_index[1] > cur_freq_index[0]){ /* No working cores on A57 cluster and the current frequency of A57 is higher than working Denver, then tune the frequency */
-      ARM << std::to_string(bestfreq) << std::endl;
-      cur_freq[1] = bestfreq; /* Update the current frequency */
+      ARM << std::to_string(best_cpu_freq) << std::endl;
+      cur_freq[1] = best_cpu_freq; /* Update the current frequency */
       cur_freq_index[1] = freq_index;
     }  
   }else{
-    ARM << std::to_string(bestfreq) << std::endl;
+    ARM << std::to_string(best_cpu_freq) << std::endl;
     /* If the other cluster is totally idle, here it should set the frequency of the other cluster to the same */
     int cluster_active = std::accumulate(status_working + start_coreid[0], status_working + end_coreid[0], 0);   
     if(cluster_active == 0 && cur_freq_index[0] > cur_freq_index[1]){ /* No working cores on Denver cluster and the current frequency of Denver is higher than working A57, then tune the frequency */
-      Denver << std::to_string(bestfreq) << std::endl;
-      cur_freq[0] = bestfreq; /* Update the current frequency */
+      Denver << std::to_string(best_cpu_freq) << std::endl;
+      cur_freq[0] = best_cpu_freq; /* Update the current frequency */
       cur_freq_index[0] = freq_index;
     }  
   }
-  cur_freq[best_cluster] = bestfreq; /* Update the current frequency */
-  cur_freq_index[best_cluster] = freq_index; /* Update the current frequency index */
+  cur_freq[best_cluster] = best_cpu_freq; /* Update the current CPU frequency */
+  cur_freq_index[best_cluster] = freq_index; /* Update the current CPU frequency index */
+}
+
+/* To be done: how to tune the Memory Frequency (shared resources) */
+void PolyTask::ddr_frequency_tuning(int nthread, int ddr_freq_index){
+  uint64_t best_ddr_freq = avail_ddr_freq[ddr_freq_index];
 }
 
 int PolyTask::find_best_config(int nthread, PolyTask * it){ /* The kernel task hasn't got the best config yet, three loops to search for the best configs. */
@@ -755,18 +762,18 @@ int PolyTask::find_best_config(int nthread, PolyTask * it){ /* The kernel task h
   }
   /* Step 1: first standard: check if the execution time of (current frequency of Denver, Denver, 2) < 1 ms? --- define as Fine-grained tasks --- Find out best core type, number of cores, doesn't change frequency */
   /* After finding out the best config, double check if it is fine-grained? TBD */
-  if(it->get_timetable(cur_freq_index[0], 0, 1) < FINE_GRAIN_THRESHOLD){
+  if(it->get_timetable(cur_ddr_freq_index, cur_freq_index[0], 0, 1) < FINE_GRAIN_THRESHOLD){
     // it->previous_tasktype = it->tasktype; /* First fine-grained task goes here and set its task type as the previous task type for next incoming task */
     for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
       if(sum_cluster_active[1-clus_id] == 0){ /* the number of active cores is zero in another cluster */
-        idleP_cluster = idle_power[cur_freq_index[clus_id]][clus_id] + idle_power[cur_freq_index[1-clus_id]][1-clus_id]; /* Then equals idle power of whole chip */
+        idleP_cluster = idle_power[cur_ddr_freq_index][cur_freq_index[clus_id]][clus_id] + idle_power[cur_ddr_freq_index][cur_freq_index[1-clus_id]][1-clus_id]; /* Then equals idle power of whole chip */
 #ifdef DEBUG
         LOCK_ACQUIRE(output_lck);
         std::cout << "[DEBUG] Fine-grained task " << it->taskid << ": Cluster " << 1-clus_id << " no active cores. Therefore, the idle power of cluster " << clus_id << " euqals the idle power of whole chip " << idleP_cluster << std::endl;
         LOCK_RELEASE(output_lck);
 #endif 
       }else{
-        idleP_cluster = idle_power[cur_freq_index[clus_id]][clus_id]; /* otherwise, equals idle power of the cluster */
+        idleP_cluster = idle_power[cur_ddr_freq_index][cur_freq_index[clus_id]][clus_id]; /* otherwise, equals idle power of the cluster */
 #ifdef DEBUG
         LOCK_ACQUIRE(output_lck);
         std::cout << "[DEBUG] Fine-grained task " << it->taskid << ": Cluster " << 1-clus_id << " has active cores. Therefore, the idle power of cluster " << clus_id << " euqals the idle power of the cluster itself " << idleP_cluster << std::endl;
@@ -776,8 +783,8 @@ int PolyTask::find_best_config(int nthread, PolyTask * it){ /* The kernel task h
       for(auto&& wid : ptt_layout[start_coreid[clus_id]]){
         sum_cluster_active[clus_id] = (sum_cluster_active[clus_id] < wid)? wid : sum_cluster_active[clus_id];
         float idleP = idleP_cluster * wid / sum_cluster_active[clus_id];
-        float runtimeP = it->get_powertable(cur_freq_index[clus_id], clus_id, wid-1);
-        float timeP = it->get_timetable(cur_freq_index[clus_id], clus_id, wid-1);
+        float runtimeP = it->get_cpupowertable(cur_ddr_freq_index, cur_freq_index[clus_id], clus_id, wid-1);
+        float timeP = it->get_timetable(cur_ddr_freq_index, cur_freq_index[clus_id], clus_id, wid-1);
         energy_pred = timeP * (runtimeP + idleP); /* it->get_powertable() is only the prediction for runtime power. */
 #ifdef DEBUG
           LOCK_ACQUIRE(output_lck);
@@ -804,17 +811,18 @@ int PolyTask::find_best_config(int nthread, PolyTask * it){ /* The kernel task h
       //   it->granularity_fine = true;
       // }
     }else{ /* Coarse-grained tasks --- Find out best frequency, core type, number of cores */
+      for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){
       for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
         for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
           if(sum_cluster_active[1-clus_id] == 0){ /* the number of active cores is zero in another cluster */
-            idleP_cluster = idle_power[freq_indx][clus_id] + idle_power[freq_indx][1-clus_id]; /* Then equals idle power of whole chip */
+            idleP_cluster = idle_power[ddr_freq_indx][freq_indx][clus_id] + idle_power[ddr_freq_indx][freq_indx][1-clus_id]; /* Then equals idle power of whole chip */
 #ifdef DEBUG
             LOCK_ACQUIRE(output_lck);
             std::cout << "[DEBUG] Cluster " << 1-clus_id << " no active cores. Therefore, the idle power of cluster " << clus_id << " euqals the idle power of whole chip " << idleP_cluster << std::endl;
             LOCK_RELEASE(output_lck);
 #endif 
           }else{
-            idleP_cluster = idle_power[freq_indx][clus_id]; /* otherwise, equals idle power of the cluster */
+            idleP_cluster = idle_power[ddr_freq_indx][freq_indx][clus_id]; /* otherwise, equals idle power of the cluster */
 #ifdef DEBUG
             LOCK_ACQUIRE(output_lck);
             std::cout << "[DEBUG] Cluster " << 1-clus_id << " has active cores. Therefore, the idle power of cluster " << clus_id << " euqals the idle power of the cluster itself " << idleP_cluster << std::endl;
@@ -824,32 +832,35 @@ int PolyTask::find_best_config(int nthread, PolyTask * it){ /* The kernel task h
           for(auto&& wid : ptt_layout[start_coreid[clus_id]]){
             sum_cluster_active[clus_id] = (sum_cluster_active[clus_id] < wid)? wid : sum_cluster_active[clus_id];
             float idleP = idleP_cluster * wid / sum_cluster_active[clus_id];
-            float runtimeP = it->get_powertable(freq_indx, clus_id, wid-1);
-            float timeP = it->get_timetable(freq_indx, clus_id, wid-1);
+            float CPUPowerP = it->get_cpupowertable(ddr_freq_indx, freq_indx, clus_id, wid-1); /* includes idle power + runtime power, so when computing energy, we need to remove the replicated idle power from concurrent tasks */
+            float DDRPowerP = it->get_ddrpowertable(ddr_freq_indx, freq_indx, clus_id, wid-1);
+            float timeP = it->get_timetable(ddr_freq_indx, freq_indx, clus_id, wid-1);
 #ifdef EDP_TEST_
-            energy_pred = timeP * timeP * (runtimeP + idleP);
+            energy_pred = timeP * timeP * (CPUPowerP + idleP);
 #else
-            energy_pred = timeP * (runtimeP + idleP); /* it->get_powertable() is only the prediction for runtime power. */
+            energy_pred = timeP * (CPUPowerP - idleP_cluster + idleP + DDRPowerP);
 #endif
 #ifdef DEBUG
             LOCK_ACQUIRE(output_lck);
-            std::cout << "[DEBUG] Frequency: " << avail_freq[freq_indx] << ", cluster " << clus_id << ", width "<< wid << ", sum_cluster_active = " \
-            << sum_cluster_active[clus_id] << ", idle power " << idleP << ", runtime power " << runtimeP << ", execution time " << timeP << ", energy prediction: " << energy_pred << std::endl;
+            std::cout << "[DEBUG] Memory frequency: " << avail_ddr_freq[ddr_freq_indx] <<  ", CPU frequency: " << avail_freq[freq_indx] << ", cluster " << clus_id << ", width "<< wid << ", sum_cluster_active = " << sum_cluster_active[clus_id] \
+            << ", CPU power " << CPUPowerP- idleP_cluster + idleP << ", Memory power " << DDRPowerP << ", execution time " << timeP << ", energy prediction: " << energy_pred << std::endl;
             LOCK_RELEASE(output_lck);
 #endif 
             if(energy_pred < shortest_exec){
               shortest_exec = energy_pred;
-              it->set_best_freq(freq_indx);
+              it->set_best_ddr_freq(ddr_freq_indx);
+              it->set_best_cpu_freq(freq_indx);
               it->set_best_cluster(clus_id);
               it->set_best_numcores(wid);
             }
           }
         }
       }
+      }
       it->set_enable_freq_change(true);
 // #ifdef DEBUG
       LOCK_ACQUIRE(output_lck);
-      std::cout << "[DEBUG] " << it->kernel_name << ": the optimal frequency: " << avail_freq[it->get_best_freq()] << ", best cluster: " << it->get_best_cluster() << ", best width: " << it->get_best_numcores() << std::endl;
+      std::cout << "[DEBUG] " << it->kernel_name << ": the optimal cluster Memory and CPU frequency: " << avail_ddr_freq[it->get_best_ddr_freq()] << ", " << avail_freq[it->get_best_cpu_freq()] << ", best cluster: " << it->get_best_cluster() << ", best width: " << it->get_best_numcores() << std::endl;
       LOCK_RELEASE(output_lck);
 // #endif 
     }
@@ -867,18 +878,18 @@ int PolyTask::update_best_config(int nthread, PolyTask * it){
   int best_cluster = it->get_best_cluster();
   it->leader = start_coreid[best_cluster] + (rand() % ((end_coreid[best_cluster] - start_coreid[best_cluster])/it->width)) * it->width;
   it->get_bestconfig = true;
-  if(it->get_timetable(cur_freq_index[best_cluster], best_cluster, it->width - 1) < FINE_GRAIN_THRESHOLD){ /* Incoming tasks are fine-grained */ 
+  if(it->get_timetable(cur_ddr_freq_index, cur_freq_index[best_cluster], best_cluster, it->width - 1) < FINE_GRAIN_THRESHOLD){ /* Incoming tasks are fine-grained */ 
     it->granularity_fine = true; /* Mark it as fine-grained task */
 #ifdef DEBUG
     LOCK_ACQUIRE(output_lck);
     if(it->get_enable_freq_change() == false){
       std::cout << "[DEBUG] For fine-grained task " << it->taskid << ", current frequency: " << cur_freq[it->get_best_cluster()] << ", best cluster: " << it->get_best_cluster() \
       << ", best width: " << it->get_best_numcores() << ", it->get_timetable(cur_freq_index[best_cluster], best_cluster, it->width - 1) = " \
-      << it->get_timetable(cur_freq_index[best_cluster], best_cluster, it->width - 1) << std::endl;
+      << it->get_timetable(cur_ddr_freq_index, cur_freq_index[best_cluster], best_cluster, it->width - 1) << std::endl;
     }else{
-      std::cout << "[DEBUG] For fine-grained task " << it->taskid << ", BEST frequency: " << avail_freq[it->get_best_freq()] << ", best cluster: " << it->get_best_cluster() \
+      std::cout << "[DEBUG] For fine-grained task " << it->taskid << ", BEST CPU frequency: " << avail_freq[it->get_best_cpu_freq()] << ", BEST Memory frequency: " << avail_ddr_freq[it->get_best_ddr_freq()] << ", best cluster: " << it->get_best_cluster() \
       << ", best width: " << it->get_best_numcores() << ", it->get_timetable(cur_freq_index[best_cluster], best_cluster, it->width - 1) = " \
-      << it->get_timetable(cur_freq_index[best_cluster], best_cluster, it->width - 1) << std::endl;
+      << it->get_timetable(cur_ddr_freq_index, cur_freq_index[best_cluster], best_cluster, it->width - 1) << std::endl;
     }
     LOCK_RELEASE(output_lck);
 #endif 
@@ -895,7 +906,7 @@ int PolyTask::ERASE_Target_Energy_2(int nthread, PolyTask * it){
     for(int cluster = 0; cluster < NUMSOCKETS; ++cluster) {
       for(auto&& width : ptt_layout[start_coreid[cluster]]) {
         auto&& ptt_val = 0.0f;
-        ptt_val = it->get_timetable(ptt_freq_index[cluster], cluster, width - 1);
+        ptt_val = it->get_timetable(0, ptt_freq_index[cluster], cluster, width - 1);
 #ifdef TRAIN_METHOD_1 /* Allow three tasks to train the same config, pros: training is faster, cons: not apply to memory-bound tasks */
         if(it->get_PTT_UpdateFlag(ptt_freq_index[cluster], cluster, width-1) < NUM_TRAIN_TASKS){
           it->width  = width;
@@ -903,7 +914,7 @@ int PolyTask::ERASE_Target_Energy_2(int nthread, PolyTask * it){
           it->increment_PTT_UpdateFlag(ptt_freq_index[cluster],cluster,width-1);
 #ifdef DEBUG
           LOCK_ACQUIRE(output_lck);
-          std::cout << "[DEBUG] " << it->kernel_name <<"->Timetable(" << ptt_freq_index[cluster] << ", " << cluster << ", " << width << ") = " << ptt_val << ". Run with (" << it->leader << ", " << it->width << ")." << std::endl;
+          std::cout << "[DEBUG] " << it->kernel_name <<"->Timetable(1.866GHz, " << ptt_freq_index[cluster] << ", " << cluster << ", " << width << ") = " << ptt_val << ". Run with (" << it->leader << ", " << it->width << ")." << std::endl;
           LOCK_RELEASE(output_lck);
 #endif
           return it->leader;
@@ -918,7 +929,7 @@ int PolyTask::ERASE_Target_Energy_2(int nthread, PolyTask * it){
           // it->increment_PTT_UpdateFlag(ptt_freq_index[cluster],cluster,width-1);
 #ifdef DEBUG
           LOCK_ACQUIRE(output_lck);
-          std::cout << "[DEBUG] " << it->kernel_name <<"->Timetable(" << ptt_freq_index[cluster] << ", " << cluster << ", " << width << ") = 0. Run with (" << it->leader << ", " << it->width << ")." << std::endl;
+          std::cout << "[DEBUG] " << it->kernel_name <<"->Timetable(1.866GHz, " << ptt_freq_index[cluster] << ", " << cluster << ", " << width << ") = 0. Run with (" << it->leader << ", " << it->width << ")." << std::endl;
           LOCK_RELEASE(output_lck);
 #endif
           return it->leader;

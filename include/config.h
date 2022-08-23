@@ -18,7 +18,14 @@
 #define START_D 0
 #define START_A 2
 #define NUM_AVAIL_FREQ 12
+#define NUM_DDR_AVAIL_FREQ 5
 #define NUMSOCKETS 2
+
+//#define Model_Computation_Overhead
+
+#define Performance_Model_2
+#define CPU_Power_Model_6
+#define DDR_Power_Model_3
 
 //#define EDP_TEST_  // Test minimize EDP per task
 
