@@ -84,8 +84,10 @@ public:
   virtual void set_timetable_state(int cluster_index, bool new_state) = 0;
   virtual bool get_bestconfig_state() = 0;
   virtual void set_bestconfig_state(bool new_state) = 0;
-  virtual bool get_enable_freq_change() = 0;
-  virtual void set_enable_freq_change(bool new_state) = 0;
+  virtual bool get_enable_cpu_freq_change() = 0;
+  virtual void set_enable_cpu_freq_change(bool new_state) = 0;
+  virtual bool get_enable_ddr_freq_change() = 0;
+  virtual void set_enable_ddr_freq_change(bool new_state) = 0;
   virtual void set_best_cpu_freq(int freq_index) = 0;
   virtual void set_best_ddr_freq(int ddr_freq_index) = 0;
   virtual void set_best_cluster(int clusterid) = 0;
@@ -119,6 +121,7 @@ public:
   virtual void ddr_frequency_tuning(int nthread, int ddr_freq_index);
   virtual int find_best_config(int nthread, PolyTask * it);  // find out the best config for the task type by searching all possible spaces 
   virtual int update_best_config(int nthread, PolyTask * it); // update the best config for upcoming tasks
+  virtual int optimized_search(int nthread, PolyTask * it); // find out the best config for the task type using optimized search
 
 // #ifdef DVFS
 //   static void print_ptt(float table[][XITAO_MAXTHREADS][XITAO_MAXTHREADS], const char* table_name);

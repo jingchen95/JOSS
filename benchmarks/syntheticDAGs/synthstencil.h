@@ -21,7 +21,8 @@ public:
   static float mb_table[NUMSOCKETS][XITAO_MAXTHREADS]; /*mb - memory-boundness */
   static bool time_table_state[NUMSOCKETS+1];
   static bool best_config_state;
-  static bool enable_freq_change;
+  static bool enable_cpu_freq_change;
+  static bool enable_ddr_freq_change;
   static int best_cpufreqindex;
   static int best_ddrfreqindex;
   static int best_cluster;
@@ -161,12 +162,19 @@ public:
     best_config_state = new_state;
   }
   /* Enable frequency change or not (fine-grained or coarse-grained) */
-  bool get_enable_freq_change(){
-    bool state = enable_freq_change;
+  bool get_enable_cpu_freq_change(){
+    bool state = enable_cpu_freq_change;
     return state;
   }
-  void set_enable_freq_change(bool new_state){
-    enable_freq_change = new_state;
+  void set_enable_cpu_freq_change(bool new_state){
+    enable_cpu_freq_change = new_state;
+  }
+  bool get_enable_ddr_freq_change(){
+    bool state = enable_ddr_freq_change;
+    return state;
+  }
+  void set_enable_ddr_freq_change(bool new_state){
+    enable_ddr_freq_change = new_state;
   }
   void set_best_cpu_freq(int cpu_freq_index){
     best_cpufreqindex = cpu_freq_index;

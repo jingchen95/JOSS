@@ -2,7 +2,7 @@
 #define _CONFIG_H
 
 /* Open debug option*/
-#define DEBUG
+//#define DEBUG
 
 /* 2021 Sep 28: paper II takes DVFS into account*/
 // #define dvfs
@@ -21,9 +21,12 @@
 #define NUM_DDR_AVAIL_FREQ 5
 #define NUMSOCKETS 2
 
-//#define Model_Computation_Overhead
+//#define Model_Computation_Overhead // measure the time that consumed for populating the look-up tables, inc execution time and power tables
+//#define Search_Overhead // Measure the time that consumed by searching for the best config in poly_task.cpp
+#define Optimized_Search // Optimized searching method to reduce the searching space 
+//#define Exhastive_Search // Search for all possible configurations
 
-#define Performance_Model_2
+#define Performance_Model_3
 #define CPU_Power_Model_6
 #define DDR_Power_Model_3
 

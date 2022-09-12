@@ -34,9 +34,9 @@ struct read_format {
   } values[];
 };
 // std::ofstream pmc;
-std::ofstream Denver("/sys/devices/system/cpu/cpu1/cpufreq/scaling_setspeed");
-std::ofstream ARM("/sys/devices/system/cpu/cpu0/cpufreq/scaling_setspeed");
-
+std::ofstream Denver("/sys/devices/system/cpu/cpu1/cpufreq/scaling_setspeed"); // edit Denver cluster frequency
+std::ofstream ARM("/sys/devices/system/cpu/cpu0/cpufreq/scaling_setspeed"); // edit A57 cluster frequency
+std::ofstream EMC("/sys/kernel/debug/bpmp/debug/clk/emc/rate"); // edit chip memory frequency
 #if defined(Haswell)
 int num_sockets;
 #endif
@@ -57,6 +57,7 @@ int current_freq;
 int freq_index;
 long cur_freq[NUMSOCKETS] = {2035200, 2035200}; /*starting frequency is 2.04GHz for both clusters */
 int cur_freq_index[NUMSOCKETS] = {0,0};
+long cur_ddr_freq = 1866000000;
 int cur_ddr_freq_index = 0;
 long avail_freq[NUM_AVAIL_FREQ] = {2035200, 1881600, 1728000, 1574400, 1420800, 1267200, 1113600, 960000, 806400, 652800, 499200, 345600};
 long avail_ddr_freq[NUM_DDR_AVAIL_FREQ] = {1866000000, 1600000000, 1331200000, 1062400000, 800000000};
@@ -118,6 +119,20 @@ std::chrono::time_point<std::chrono::system_clock> t3;
 // std::mutex mtx;
 std::condition_variable cv;
 bool finish = false;
+
+enum { NS_PER_SECOND = 1000000000 };
+void sub_timespec(struct timespec t1, struct timespec t2, struct timespec *td){
+    td->tv_nsec = t2.tv_nsec - t1.tv_nsec;
+    td->tv_sec  = t2.tv_sec - t1.tv_sec;
+    if (td->tv_sec > 0 && td->tv_nsec < 0){
+      td->tv_nsec += NS_PER_SECOND;
+      td->tv_sec--;
+    }
+    else if (td->tv_sec < 0 && td->tv_nsec > 0){
+      td->tv_nsec -= NS_PER_SECOND;
+      td->tv_sec++;
+    }
+}
 
 // std::vector<thread_info> thread_info_vector(XITAO_MAXTHREADS);
 //! Allocates/deallocates the XiTAO's runtime resources. The size of the vector is equal to the number of available CPU cores. 
@@ -1045,7 +1060,7 @@ int worker_loop(int nthread){
   if(Sched == 1){
     for(int i=0; i<XITAO_MAXTHREADS; i++){ 
       status[i] = 1;
-      status_working[i] = 1;
+      status_working[i] = 0;
     }
   }
   bool stop = false;
@@ -1110,10 +1125,20 @@ int worker_loop(int nthread){
         if(global_training == true && assembly->tasktype < num_kernels){ 
           if(assembly->get_bestconfig_state() == false){
             assembly->set_bestconfig_state(true);
+#if defined Exhastive_Search
             assembly->find_best_config(nthread, assembly);
+#endif
+#if defined Optimized_Search
+            assembly->optimized_search(nthread, assembly);
+#endif
           }else{
             if(assembly->get_bestconfig == false){
               assembly->update_best_config(nthread, assembly);
+#ifdef DEBUG
+              LOCK_ACQUIRE(output_lck);
+              std::cout << "[Jing-DEBUG] Task " << assembly->taskid << " is wrong here? " << std::endl;
+              LOCK_RELEASE(output_lck);
+#endif
             }
           }
         }
@@ -1122,14 +1147,13 @@ int worker_loop(int nthread){
         std::cout << "[DEBUG] Distributing " << assembly->kernel_name << " task " << assembly->taskid << " with width " << assembly->width << " to workers [" << assembly->leader << "," << assembly->leader + assembly->width << ")" << std::endl;
         LOCK_RELEASE(output_lck);
 #endif
-        //std::cout << "Task: " << assembly->kernel_name << "\n";
         /* After getting the best config, and before distributing to AQs: 
         (1) Coarse-grained task: check if it is needed to tune the frequency; 
         (2) Fine-grained task: check the WQs of the cluster include N consecutive same tasks, that the total execution time of these N tasks > threshold, then search for the best frequency and then tune the frequency */
         if(global_training == true && assembly->get_bestconfig_state() == true){
           int best_cluster = assembly->get_best_cluster();
           int best_width = assembly->get_best_numcores();
-          if(assembly->granularity_fine == true && assembly->get_enable_freq_change() == false){ /* (2) Fine-grained tasks && not allowed to do frequency change currently */
+          if(assembly->granularity_fine == true && assembly->get_enable_cpu_freq_change() == false && assembly->get_enable_ddr_freq_change() == false){ /* (2) Fine-grained tasks && not allowed to do frequency change currently */
 #ifdef DEBUG
           LOCK_ACQUIRE(output_lck);
           std::cout << "[DEBUG] Assembly Task " << assembly->taskid << " is a fine-grained task. " << std::endl;
@@ -1137,23 +1161,25 @@ int worker_loop(int nthread){
 #endif        
           int consecutive_fine_grained = 1; /* assembly already is one fine-grained task, so initilize to 1 */
           for(int i = 0; i < 8; i++){ /* Assume the maximum of each work queue size is 8 */
+            int task_of_this_round = 0; // count the task of the same type in each round (startcore to endcore)
             for(int j = start_coreid[best_cluster]; j < end_coreid[best_cluster]; j++){
 #ifdef DEBUG
               LOCK_ACQUIRE(output_lck);
               std::cout << "[DEBUG] Visit the " << i << "th task in the queues, visit the " << j << "th core in cluster " << best_cluster << std::endl;
               LOCK_RELEASE(output_lck);
 #endif 
-              if(worker_ready_q[j].size() > 0){
+              if(worker_ready_q[j].size() > i){
                 std::list<PolyTask *>::iterator it = worker_ready_q[j].begin();
 #ifdef DEBUG
                 LOCK_ACQUIRE(output_lck);
-                std::cout << "[DEBUG] The queue size of " << j << "th core > 0. Now point to the begining task. " << std::endl;
+                std::cout << "[DEBUG] The queue size of " << j << "th core > 0. Now point to the " << i << "th task. " << std::endl;
                 LOCK_RELEASE(output_lck);
 #endif 
                 if(i > 0){
                   std::advance(it, i);
                 }
                 if((*it)->granularity_fine == true && (*it)->tasktype == assembly->tasktype){
+                  task_of_this_round++;
                   consecutive_fine_grained++; /* Another same type of task */
 #ifdef DEBUG
                   LOCK_ACQUIRE(output_lck);
@@ -1164,35 +1190,35 @@ int worker_loop(int nthread){
                     // find out the best frequency here
 #ifdef DEBUG
                     LOCK_ACQUIRE(output_lck);
-                    std::cout << "[DEBUG] Enough same type of tasks! Find out the best frequency now!" << std::endl;
+                    std::cout << "[DEBUG] Enough same type of tasks! Find out the best frequency now for task " << assembly->taskid << std::endl;
                     LOCK_RELEASE(output_lck);
 #endif                    
                     float idleP_cluster = 0.0f;
                     float shortest_exec = 100000.0f;
                     float energy_pred = 0.0f;
                     int sum_cluster_active = std::accumulate(status+start_coreid[1-best_cluster], status+end_coreid[1-best_cluster], 0); /* If there is any active cores in another cluster */
-#ifdef DEBUG
-                    LOCK_ACQUIRE(output_lck);
-                    std::cout << "[DEBUG] Number of active cores in cluster " << 1-best_cluster << ": " << sum_cluster_active << ". status[0] = " << status[0] \
-                    << ", status[1] = " << status[1] << ", status[2] = " << status[2] << ", status[3] = " << status[3] << ", status[4] = " << status[4] << ", status[5] = " << status[5] << std::endl;
-                    LOCK_RELEASE(output_lck);
-#endif
+// #ifdef DEBUG
+//                     LOCK_ACQUIRE(output_lck);
+//                     std::cout << "[DEBUG] Number of active cores in cluster " << 1-best_cluster << ": " << sum_cluster_active << ". status[0] = " << status[0] \
+//                     << ", status[1] = " << status[1] << ", status[2] = " << status[2] << ", status[3] = " << status[3] << ", status[4] = " << status[4] << ", status[5] = " << status[5] << std::endl;
+//                     LOCK_RELEASE(output_lck);
+// #endif
                     for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){
                       for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
                         if(sum_cluster_active == 0){ /* the number of active cores is zero in another cluster */
                           idleP_cluster = idle_power[ddr_freq_indx][freq_indx][best_cluster] + idle_power[ddr_freq_indx][freq_indx][1-best_cluster]; /* Then equals idle power of whole chip */
-#ifdef DEBUG
-                          LOCK_ACQUIRE(output_lck);
-                          std::cout << "[DEBUG] Cluster " << 1-best_cluster << " no active cores. Therefore, the idle power of cluster " << best_cluster << " euqals the idle power of whole chip " << idleP_cluster << std::endl;
-                          LOCK_RELEASE(output_lck);
-#endif 
+// #ifdef DEBUG
+//                           LOCK_ACQUIRE(output_lck);
+//                           std::cout << "[DEBUG] Cluster " << 1-best_cluster << " no active cores. Therefore, the idle power of cluster " << best_cluster << " euqals the idle power of whole chip " << idleP_cluster << std::endl;
+//                           LOCK_RELEASE(output_lck);
+// #endif 
                         }else{
                           idleP_cluster = idle_power[ddr_freq_indx][freq_indx][best_cluster]; /* otherwise, equals idle power of the cluster */
-#ifdef DEBUG
-                          LOCK_ACQUIRE(output_lck);
-                          std::cout << "[DEBUG] Cluster " << 1-best_cluster << " has active cores. Therefore, the idle power of cluster " << best_cluster << " euqals the idle power of the cluster itself " << idleP_cluster << std::endl;
-                          LOCK_RELEASE(output_lck);
-#endif 
+// #ifdef DEBUG
+//                           LOCK_ACQUIRE(output_lck);
+//                           std::cout << "[DEBUG] Cluster " << 1-best_cluster << " has active cores. Therefore, the idle power of cluster " << best_cluster << " euqals the idle power of the cluster itself " << idleP_cluster << std::endl;
+//                           LOCK_RELEASE(output_lck);
+// #endif 
                         }
                         sum_cluster_active = (sum_cluster_active < best_width)? best_width : sum_cluster_active;
                         float idleP = idleP_cluster * best_width / sum_cluster_active;
@@ -1218,156 +1244,155 @@ int worker_loop(int nthread){
                     std::cout << "[DEBUG] For the fine-grained tasks, get the optimal CPU and Memory frequency: " << avail_freq[assembly->get_best_cpu_freq()] << ", " << avail_ddr_freq[assembly->get_best_ddr_freq()] << std::endl;
                     LOCK_RELEASE(output_lck);
 // #endif 
+                    (*it)->set_enable_cpu_freq_change(true); // Set the frequency change state for the current testing fine-grained task
+                    (*it)->set_enable_ddr_freq_change(true);
                     goto consecutive_true; // No more searching
+                    // assembly->set_enable_cpu_freq_change(true); // Set the frequency change state for the current fine-grained task that to be scheduled
+                    // assembly->set_enable_ddr_freq_change(true);
+                    // break;
                   }else{
                     continue;
                   }
                 }else{
+#ifdef DEBUG
+                  LOCK_ACQUIRE(output_lck);
+                  std::cout << "[DEBUG] Encounter other type of tasks! Task " << assembly->taskid << " is not allowed to do frequency change (both)." << std::endl;
+                  LOCK_RELEASE(output_lck);
+#endif 
                   goto consecutive_false;
+//                   assembly->set_enable_cpu_freq_change(false); 
+//                   assembly->set_enable_ddr_freq_change(false);
+//                   break;
                 }
               }else{
+#ifdef DEBUG
+                LOCK_ACQUIRE(output_lck);
+                std::cout << "[DEBUG] No (more) task in " << j << "th core's queue." << std::endl;
+                LOCK_RELEASE(output_lck);
+#endif 
                 continue;
               } 
             }
-          }
-          consecutive_true: assembly->set_enable_freq_change(true); /* TBD Problem: should mark traversed tasks, next following tasks should do the process again, since the DAG might include other type of tasks */
-          consecutive_false:;
-        }
-          
-          /*Tune frequency if required != current, for both fine-grained and coarse-grained tasks */
-          if(assembly->get_enable_freq_change() == true){ /* Allow to do frequency tuning for the tasks */
-            assembly->best_cpu_freq = avail_freq[assembly->get_best_cpu_freq()];
-#ifdef DEBUG
-            LOCK_ACQUIRE(output_lck);
-            std::cout << "[DEBUG] " << assembly->kernel_name << " task " << assembly->taskid << " is allowed to do frequency scaling. \n";
-            LOCK_RELEASE(output_lck);
-#endif
-#ifndef FineStrategyTest /* The aim is to test energy difference when the DVFS is also applied to fine-grained tasks, need to enable #define threshold 0.0001 in include/config.h */
-            if(assembly->best_cpu_freq != cur_freq[best_cluster]){ /* check if the required frequency equals the current frequency! */
+            if(consecutive_fine_grained == 1 || task_of_this_round == 0){ // if the beginning tasks of the cluster cores are not the same task OR no tasks at all
 #ifdef DEBUG
               LOCK_ACQUIRE(output_lck);
-              std::cout << "[DEBUG] For " << assembly->kernel_name << " task " << assembly->taskid << ": current frequency " << cur_freq[best_cluster] << " != required frequency " << assembly->best_cpu_freq << ". \n";
+              std::cout << "[DEBUG] Loop for a round in the cluster and find no same type of tasks. So task " << assembly->taskid << " is not allowed to do frequency change (both)." << std::endl;
               LOCK_RELEASE(output_lck);
+#endif 
+              // assembly->set_enable_cpu_freq_change(false); 
+              // assembly->set_enable_ddr_freq_change(false);
+              // break; // exit, no need to loop for another round
+              goto consecutive_false;
+            }
+          }
+          consecutive_true: {
+            assembly->set_enable_cpu_freq_change(true); 
+            assembly->set_enable_ddr_freq_change(true);
+          } /* TBD Problem: should mark traversed tasks, next following tasks should do the process again, since the DAG might include other type of tasks */
+          consecutive_false: {
+            assembly->set_enable_cpu_freq_change(false); 
+            assembly->set_enable_ddr_freq_change(false);
+          }
+        }
+          
+        /*Tune CPU frequency if required != current, for both fine-grained and coarse-grained tasks */
+        if(assembly->get_enable_cpu_freq_change() == true){ /* Allow to do frequency tuning for the tasks */
+          assembly->best_cpu_freq = avail_freq[assembly->get_best_cpu_freq()];
+#ifdef DEBUG
+          LOCK_ACQUIRE(output_lck);
+          std::cout << "[DEBUG] " << assembly->kernel_name << " task " << assembly->taskid << " is allowed to do CPU Frequency scaling. \n";
+          LOCK_RELEASE(output_lck);
+#endif
+#ifndef FineStrategyTest /* The aim is to test energy difference when the DVFS is also applied to fine-grained tasks, need to enable #define threshold 0.0001 in include/config.h */
+          if(assembly->best_cpu_freq != cur_freq[best_cluster]){ /* check if the required frequency equals the current frequency! */
+#ifdef DEBUG
+            LOCK_ACQUIRE(output_lck);
+            std::cout << "[DEBUG] For " << assembly->kernel_name << " task " << assembly->taskid << ": current frequency " << cur_freq[best_cluster] << " != required frequency " << assembly->best_cpu_freq << ". \n";
+            LOCK_RELEASE(output_lck);
 #endif
 #else
 #ifdef DEBUG
+            LOCK_ACQUIRE(output_lck);
+            std::cout << "[DVFSforFineGrained] For " << assembly->kernel_name << " task " << assembly->taskid << ": current frequency " << cur_freq[best_cluster] << ", required frequency " << assembly->best_cpu_freq << ". \n";
+            LOCK_RELEASE(output_lck);
+#endif
+#endif
+            if(best_width == (end_coreid[best_cluster] - start_coreid[best_cluster])){  /* ==> Strategy for tuning the frequency: if the best width = number of cores in cluster, just change frequency! */
+              assembly->cpu_frequency_tuning(nthread, best_cluster, assembly->get_best_cpu_freq());
+#ifdef DEBUG
               LOCK_ACQUIRE(output_lck);
-              std::cout << "[DVFSforFineGrained] For " << assembly->kernel_name << " task " << assembly->taskid << ": current frequency " << cur_freq[best_cluster] << ", required frequency " << assembly->best_cpu_freq << ". \n";
+              std::cout << "[DEBUG] Best width: " << best_width << " equals the number of cores in the cluster. Change the frequency now! =====> current frequency[Denver] = " \
+              << cur_freq[0] << ", current frequency[A57] = " << cur_freq[1] << std::endl;
               LOCK_RELEASE(output_lck);
 #endif
-#endif
-              if(best_width == (end_coreid[best_cluster] - start_coreid[best_cluster])){  /* ==> Strategy for tuning the frequency: if the best width = number of cores in cluster, just change frequency! */
-                assembly->cpu_frequency_tuning(nthread, best_cluster, assembly->get_best_cpu_freq());
-                // if(best_cluster == 0){ //Denver
-                //   Denver << std::to_string(assembly->best_cpu_freq) << std::endl;
-                //   /* If the other cluster is totally idle, here it should set the frequency of the other cluster to the same */
-                //   int cluster_active = std::accumulate(status_working + start_coreid[1], status_working + end_coreid[1], 0);   
-                //   if(cluster_active == 0 && cur_freq_index[1] > cur_freq_index[0]){ /* No working cores on A57 cluster and the current frequency of A57 is higher than working Denver, then tune the frequency */
-                //     ARM << std::to_string(assembly->best_cpu_freq) << std::endl;
-                //     cur_freq[1] = assembly->best_cpu_freq; /* Update the current frequency */
-                //     cur_freq_index[1] = assembly->get_best_cpu_freq();
-                //   }  
-                // }else{
-                //   ARM << std::to_string(assembly->best_cpu_freq) << std::endl;
-                //   /* If the other cluster is totally idle, here it should set the frequency of the other cluster to the same */
-                //   int cluster_active = std::accumulate(status_working + start_coreid[0], status_working + end_coreid[0], 0);   
-                //   if(cluster_active == 0 && cur_freq_index[0] > cur_freq_index[1]){ /* No working cores on Denver cluster and the current frequency of Denver is higher than working A57, then tune the frequency */
-                //     Denver << std::to_string(assembly->best_cpu_freq) << std::endl;
-                //     cur_freq[0] = assembly->best_cpu_freq; /* Update the current frequency */
-                //     cur_freq_index[0] = assembly->get_best_cpu_freq();
-                //   }  
-                // }
-                // cur_freq[best_cluster] = assembly->best_cpu_freq; /* Update the current frequency */
-                // cur_freq_index[best_cluster] = assembly->get_best_cpu_freq(); /* Update the current frequency index */
+            }else{
+              // int freq_change_cluster_active = std::accumulate(status_working + start_coreid[best_cluster], status_working + end_coreid[best_cluster], 0); 
+              if(std::accumulate(status_working + start_coreid[best_cluster], status_working + end_coreid[best_cluster], 0) > 0){ /* Check if there are any concurrent tasks? Yes, take the average, no, change the frequency to the required! */
+                int new_freq_index = (cur_freq_index[best_cluster] + assembly->get_best_cpu_freq()) / 2;   /* Method 1: take the average of two frequencies */
+                assembly->cpu_frequency_tuning(nthread, best_cluster, new_freq_index);
 #ifdef DEBUG
                 LOCK_ACQUIRE(output_lck);
-                std::cout << "[DEBUG] Best width: " << best_width << " equals the number of cores in the cluster. Change the frequency now! =====> current frequency[Denver] = " \
-                << cur_freq[0] << ", current frequency[A57] = " << cur_freq[1] << std::endl;
+                std::cout << "[DEBUG] CPU frequency tuning: The cluster has concurrent tasks running at the same time! Strategy: take the average, tune the frequency to " << avail_freq[new_freq_index] \
+                << " =====> current frequency[Denver] = " << cur_freq[0] << ", current frequency[A57] = " << cur_freq[1] << std::endl;
+                LOCK_RELEASE(output_lck);
+#endif 
+              }else{
+                assembly->cpu_frequency_tuning(nthread, best_cluster, assembly->get_best_cpu_freq());
+#ifdef DEBUG
+                LOCK_ACQUIRE(output_lck);
+                std::cout << "[DEBUG] CPU frequency tuning: The cluster has no tasks running now! Change the cluster frequency now! =====> current frequency[Denver] = " << cur_freq[0] << ", current frequency[A57] = " << cur_freq[1] << std::endl;
                 LOCK_RELEASE(output_lck);
 #endif
-              }else{
-                int freq_change_cluster_active = std::accumulate(status_working + start_coreid[best_cluster], status_working + end_coreid[best_cluster], 0); /* Check if there is any task running on the cluster? Yes, take the average, no, change the frequency to the required! */
-                if(freq_change_cluster_active > 0){
-                  int new_freq_index = (cur_freq_index[best_cluster] + assembly->get_best_cpu_freq()) / 2;   /* Method 1: take the average of two frequencies */
-                  assembly->cpu_frequency_tuning(nthread, best_cluster, new_freq_index);
-                  // if(best_cluster == 0){ //Denver
-                  //   Denver << std::to_string(avail_freq[new_freq_index]) << std::endl;
-                  //   /* If the other cluster is totally idle, here it should set the frequency of the other cluster to the same */
-                  //   int cluster_active = std::accumulate(status_working + start_coreid[1], status_working + end_coreid[1], 0);   
-                  //   if(cluster_active == 0 && cur_freq_index[1] > cur_freq_index[0]){ /* No working cores on A57 cluster and the current frequency of A57 is higher than working Denver, then tune the frequency */
-                  //     ARM << std::to_string(avail_freq[new_freq_index]) << std::endl;
-                  //     cur_freq[1] = avail_freq[new_freq_index]; /* Update the current frequency */
-                  //     cur_freq_index[1] = new_freq_index;
-                  //   }  
-                  // }else{
-                  //   ARM << std::to_string(avail_freq[new_freq_index]) << std::endl;
-                  //   /* If the other cluster is totally idle, here it should set the frequency of the other cluster to the same */
-                  //   int cluster_active = std::accumulate(status_working + start_coreid[0], status_working + end_coreid[0], 0);   
-                  //   if(cluster_active == 0 && cur_freq_index[0] > cur_freq_index[1]){ /* No working cores on Denver cluster and the current frequency of Denver is higher than working A57, then tune the frequency */
-                  //     Denver << std::to_string(avail_freq[new_freq_index]) << std::endl;
-                  //     cur_freq[0] = avail_freq[new_freq_index]; /* Update the current frequency */
-                  //     cur_freq_index[0] = new_freq_index;
-                  //   }  
-                  // }
-                  // cur_freq[best_cluster] = avail_freq[new_freq_index]; /* Update the current frequency */
-                  // cur_freq_index[best_cluster] = new_freq_index; /* Update the current frequency index */
-#ifdef DEBUG
-                  LOCK_ACQUIRE(output_lck);
-                  std::cout << "[DEBUG] The cluster has other tasks running at the same time! Strategy: take the average, tune the frequency to " << avail_freq[new_freq_index] \
-                  << " =====> current frequency[Denver] = " << cur_freq[0] << ", current frequency[A57] = " << cur_freq[1] << std::endl;
-                  LOCK_RELEASE(output_lck);
-#endif 
-                }else{
-                  assembly->cpu_frequency_tuning(nthread, best_cluster, assembly->get_best_cpu_freq());
-                  // if(best_cluster == 0){ //Denver
-                  //   Denver << std::to_string(assembly->best_cpu_freq) << std::endl;
-                  //   /* If the other cluster is totally idle, here it should set the frequency of the other cluster to the same */
-                  //   int cluster_active = std::accumulate(status_working + start_coreid[1], status_working + end_coreid[1], 0);   
-                  //   if(cluster_active == 0 && cur_freq_index[1] > cur_freq_index[0]){ /* No working cores on A57 cluster and the current frequency of A57 is higher than working Denver, then tune the frequency */
-                  //     ARM << std::to_string(assembly->best_cpu_freq) << std::endl;
-                  //     cur_freq[1] = assembly->best_cpu_freq; /* Update the current frequency */
-                  //     cur_freq_index[1] = assembly->get_best_cpu_freq();
-                  //   }  
-                  // }else{
-                  //   ARM << std::to_string(assembly->best_cpu_freq) << std::endl;
-                  //   /* If the other cluster is totally idle, here it should set the frequency of the other cluster to the same */
-                  //   int cluster_active = std::accumulate(status_working + start_coreid[0], status_working + end_coreid[0], 0);   
-                  //   if(cluster_active == 0 && cur_freq_index[0] > cur_freq_index[1]){ /* No working cores on Denver cluster and the current frequency of Denver is higher than working A57, then tune the frequency */
-                  //     Denver << std::to_string(assembly->best_cpu_freq) << std::endl;
-                  //     cur_freq[0] = assembly->best_cpu_freq; /* Update the current frequency */
-                  //     cur_freq_index[0] = assembly->get_best_cpu_freq();
-                  //   }  
-                  // }
-                  // cur_freq[best_cluster] = assembly->best_cpu_freq; /* Update the current frequency */
-                  // cur_freq_index[best_cluster] = assembly->get_best_cpu_freq(); /* Update the current frequency index */
-#ifdef DEBUG
-                  LOCK_ACQUIRE(output_lck);
-                  std::cout << "[DEBUG] The cluster has no tasks running now! Change the frequency now! =====> current frequency[Denver] = " << cur_freq[0] << ", current frequency[A57] = " << cur_freq[1] << std::endl;
-                  LOCK_RELEASE(output_lck);
-#endif
-                }
               }
-#ifndef FineStrategyTest
             }
+#ifndef FineStrategyTest
+          }
 #endif
+        }
+        /* Tune DDR frequency if required != current, for both fine-grained and coarse-grained tasks */
+        if(assembly->get_enable_ddr_freq_change() == true){
+          // assembly->best_ddr_freq = avail_ddr_freq[assembly->get_best_ddr_freq()];
+#ifdef DEBUG
+          LOCK_ACQUIRE(output_lck);
+          std::cout << "[DEBUG] " << assembly->kernel_name << " task " << assembly->taskid << " is allowed to do Memory Frequency Scaling. \n";
+          LOCK_RELEASE(output_lck);
+#endif
+          if(assembly->get_best_ddr_freq() != cur_ddr_freq_index){
+            if(std::accumulate(std::begin(status_working), status_working + assembly->leader, 0) + std::accumulate(status_working + assembly->leader + assembly->width, std::end(status_working), 0) > 0){  /* Check if there are any concurrent tasks? No, change the frequency to the required! */
+              int new_ddr_freq_index = (cur_ddr_freq_index + assembly->get_best_ddr_freq()) / 2;   /* Method 1: take the average of two frequencies */
+              assembly->ddr_frequency_tuning(nthread, new_ddr_freq_index);
+#ifdef DEBUG
+              LOCK_ACQUIRE(output_lck);
+              std::cout << "[DEBUG] DDR frequency tuning: concurrent tasks running at the same time! Strategy: take the average, tune the frequency to " << avail_ddr_freq[new_ddr_freq_index] \
+              << " =====> current memory frequency = " << cur_ddr_freq << std::endl;
+              LOCK_RELEASE(output_lck);
+#endif 
+            }else{ /* Check if there are any concurrent tasks? No, change the frequency to the required! */
+              assembly->ddr_frequency_tuning(nthread, assembly->get_best_ddr_freq());
+#ifdef DEBUG
+              LOCK_ACQUIRE(output_lck);
+              std::cout << "[DEBUG] DDR frequency tuning: No other tasks running now! Change the memory frequency now! =====> current memory frequency = " << cur_ddr_freq << std::endl;
+              LOCK_RELEASE(output_lck);
+#endif
+            }
           }
         }
+      }
 
         for(int i = assembly->leader; i < assembly->leader + assembly->width; i++){
-          //std::cout << "step 1\n";
-	  LOCK_ACQUIRE(worker_assembly_lock[i]);
+	        LOCK_ACQUIRE(worker_assembly_lock[i]);
           worker_assembly_q[i].push_back(st);
-	  //std::cout << "step 2\n";
 #ifdef NUMTASKS_MIX
 #ifdef ONLYCRITICAL
           int pr = assembly->if_prio(nthread, assembly);
           if(pr == 1){
 #endif
-            num_task[assembly->tasktype][ assembly->width * gotao_nthreads + i]++;
+            num_task[assembly->tasktype][assembly->width * gotao_nthreads + i]++;
 #ifdef ONLYCRITICAL
           }
 #endif
 #endif
+          // LOCK_RELEASE(worker_assembly_lock[i]);
         }
         for(int i = assembly->leader; i < assembly->leader + assembly->width; i++){
           LOCK_RELEASE(worker_assembly_lock[i]);
@@ -1415,7 +1440,7 @@ int worker_loop(int nthread){
         LOCK_RELEASE(output_lck);
 #endif
       }
-
+      status_working[nthread] = 1; // The core/thread is going to work on task, so set status as 1 
       std::chrono::time_point<std::chrono::system_clock> t1,t2;
       t1 = std::chrono::system_clock::now();
       auto start1_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(t1);
@@ -1430,6 +1455,7 @@ int worker_loop(int nthread){
       std::cout << "[DEBUG] " << assembly->kernel_name << " task " << assembly->taskid << " execution time on thread " << nthread << ": " << elapsed_seconds.count() << "\n";
       LOCK_RELEASE(output_lck);
 #endif 
+      status_working[nthread] = 0;  // The core/thread finished task, so set status as 0
       // if(Sched == 1 && nthread == assembly->leader){
 #if defined Performance_Model_Cycle 
       if(Sched == 1){
@@ -1662,19 +1688,21 @@ int worker_loop(int nthread){
                         LOCK_ACQUIRE(output_lck);
                         std::cout << "[Warning]" << assembly->kernel_name << "->Memory-boundness (Denver) is smaller than 0!" << std::endl;
                         LOCK_RELEASE(output_lck);
-                        memory_boundness = 0.0001;
+                        memory_boundness = 0.001;
                       }
                     }
                     assembly->set_mbtable(0, memory_boundness, width-1); /*first parameter: cluster 0 - Denver, second parameter: update value, third value: width_index */
                     // std::cout << "Set the MB table with the computation. Then start with the model prediction! \n"; 
 #if defined Model_Computation_Overhead
-                    std::chrono::time_point<std::chrono::system_clock> Denver_model_start;
-                    Denver_model_start = std::chrono::system_clock::now();
-                    auto Denver_model_start_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(Denver_model_start);
-                    auto Denver_model_start_epoch = Denver_model_start_ms.time_since_epoch();
-                    LOCK_ACQUIRE(output_lck);
-                    std::cout << "[Overhead] Model calculation (Denver) starts from " << Denver_model_start_epoch.count() << ". " << std::endl;
-                    LOCK_RELEASE(output_lck);
+                    // std::chrono::time_point<std::chrono::system_clock> Denver_model_start;
+                    // Denver_model_start = std::chrono::system_clock::now();
+                    // auto Denver_model_start_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(Denver_model_start);
+                    // auto Denver_model_start_epoch = Denver_model_start_ms.time_since_epoch();
+                    // LOCK_ACQUIRE(output_lck);
+                    // std::cout << "[Overhead] Model calculation (Denver) starts from " << Denver_model_start_epoch.count() << ". " << std::endl;
+                    // LOCK_RELEASE(output_lck);
+                    struct timespec Denver_start, Denver_finish, Denver_delta;
+                    clock_gettime(CLOCK_REALTIME, &Denver_start);
 #endif
                     for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){ /* Compute Predictions according to Memory-boundness Values */
                       float ddr_freq_scaling = float(avail_ddr_freq[0]) / float(avail_ddr_freq[ddr_freq_indx]);
@@ -1762,7 +1790,7 @@ int worker_loop(int nthread){
                           ddrpower = 4.0040504 * memory_boundness + 0.306568 * cpufreq + 0.7431409 * ddrfreq - 0.8051031;
                         }
                         if(width == 2){ /*Denver, width=2*/
-                          ddrpower = 26.7390709 * memory_boundness + 0.3768498 * cpufreq + 0.7559968 * ddrfreq - 1.5048697;
+                          ddrpower = 17.830587 * memory_boundness + 0.3768498 * cpufreq + 0.7559968 * ddrfreq - 0.8784249;
                         }
 #endif  
 #if defined DDR_Power_Model_2
@@ -1770,7 +1798,7 @@ int worker_loop(int nthread){
                           ddrpower = 2.5701454 * memory_boundness + 0.0517271 * cpufreq + 0.8294422 * ddrfreq + 1.8753657 * memory_boundness * cpufreq - 0.5995333 * memory_boundness * ddrfreq - 0.0029895* cpufreq * ddrfreq - 0.6119471;
                         }
                         if(width == 2){ /*Denver, width=2*/
-                          ddrpower = 15.1283833 * memory_boundness - 0.2919345 * cpufreq + 0.8707394 * ddrfreq + 13.0498892 * memory_boundness * cpufreq - 2.9460482 * memory_boundness * ddrfreq + 0.0243026 * cpufreq * ddrfreq - 0.9001091;
+                          ddrpower = 10.075838 * memory_boundness - 0.0133797 * cpufreq + 0.8017427 * ddrfreq + 8.7131834 * memory_boundness * cpufreq - 1.9651515 * memory_boundness * ddrfreq + 0.0243026 * cpufreq * ddrfreq - 0.5452121;
                         }
 #endif
 #if defined DDR_Power_Model_3
@@ -1779,8 +1807,8 @@ int worker_loop(int nthread){
                           - 0.5995333 * memory_boundness * ddrfreq - 0.0029895 * cpufreq * ddrfreq + 0.8006888 * pow(ddrfreq, 2) + 0.6209039;
                         }
                         if(width == 2){ /*Denver, width=2*/
-                          ddrpower = 18.8701008 * memory_boundness - 0.0845603 * cpufreq - 1.0785981 * ddrfreq - 38.214727 * pow(memory_boundness, 2) + 13.0498892 * memory_boundness * cpufreq - 0.0871027 * pow(cpufreq, 2) \
-                          - 2.9460482 * memory_boundness * ddrfreq + 0.0243026 * cpufreq * ddrfreq + 0.7311884 * pow(ddrfreq, 2) + 0.1124643;
+                          ddrpower = 11.8840022 * memory_boundness + 0.2207538 * cpufreq - 1.1475948 * ddrfreq - 23.7916345 * pow(memory_boundness, 2) + 8.7131834 * memory_boundness * cpufreq - 0.0871027 * pow(cpufreq, 2) \
+                          - 1.9651515 * memory_boundness * ddrfreq + 0.0243026 * cpufreq * ddrfreq + 0.7311884 * pow(ddrfreq, 2) + 0.5285202;
                         }
 #endif
 #if defined DDR_Power_Model_4
@@ -1788,19 +1816,24 @@ int worker_loop(int nthread){
                           ddrpower = 4.1645798 * memory_boundness + 0.4499325 * cpufreq - 1.3914835 * ddrfreq - 0.584781 * pow(memory_boundness, 2) - 0.0602169 * pow(cpufreq, 2) + 0.8006888 * pow(ddrfreq, 2) + 0.4277479;
                         }
                         if(width == 2){ /*Denver, width=2*/
-                          ddrpower = 30.4807884 * memory_boundness + 0.584224 * cpufreq - 1.1933407 * ddrfreq - 38.214727 * pow(memory_boundness, 2) - 0.0871027 * pow(cpufreq, 2) + 0.7311884 * pow(ddrfreq, 2) - 0.4922963;
+                          ddrpower = 19.6387512	* memory_boundness + 0.584224 * cpufreq - 1.1933407 * ddrfreq - 23.7916345 * pow(memory_boundness, 2) - 0.0871027 * pow(cpufreq, 2) + 0.7311884 * pow(ddrfreq, 2) + 0.1953074;
                         }
 #endif
                         assembly->set_ddrpowertable(ddr_freq_indx, freq_indx, 0, ddrpower, width-1); 
                       }
                     }
 #if defined Model_Computation_Overhead
-                    std::chrono::time_point<std::chrono::system_clock> Denver_model_end;
-                    Denver_model_end = std::chrono::system_clock::now();
-                    auto Denver_model_end_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(Denver_model_end);
-                    auto Denver_model_end_epoch = Denver_model_end_ms.time_since_epoch();
+                    // std::chrono::time_point<std::chrono::system_clock> Denver_model_end;
+                    // Denver_model_end = std::chrono::system_clock::now();
+                    // auto Denver_model_end_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(Denver_model_end);
+                    // auto Denver_model_end_epoch = Denver_model_end_ms.time_since_epoch();
+                    // LOCK_ACQUIRE(output_lck);
+                    // std::cout << "[Overhead] Model calculation (Denver) ends " << Denver_model_end_epoch.count() << ". " << std::endl;
+                    // LOCK_RELEASE(output_lck);
+                    clock_gettime(CLOCK_REALTIME, &Denver_finish);
+                    sub_timespec(Denver_start, Denver_finish, &Denver_delta);
                     LOCK_ACQUIRE(output_lck);
-                    std::cout << "[Overhead] Model calculation (Denver) ends " << Denver_model_end_epoch.count() << ". " << std::endl;
+                    printf("[Overhead] Model calculation (Denver): %d.%.9ld\n", (int)Denver_delta.tv_sec, Denver_delta.tv_nsec);
                     LOCK_RELEASE(output_lck);
 #endif
 #ifdef DEBUG
@@ -2040,18 +2073,23 @@ int worker_loop(int nthread){
                       memory_boundness = 1;
                     }else{
                       if(memory_boundness <= 0){ /* Execution time and power prediction according to the computed memory-boundness level */
-                        memory_boundness = 0.0001;
+                        LOCK_ACQUIRE(output_lck);
+                        std::cout << "[Warning] Memory-boundness Calculation (A57) is smaller than 0!" << std::endl;
+                        LOCK_RELEASE(output_lck);
+                        memory_boundness = 0.001;
                       }
                     }
                     assembly->set_mbtable(1, memory_boundness, width-1); /*first parameter: cluster 0 - Denver, second parameter: update value, third value: width_index */
 #if defined Model_Computation_Overhead
-                    std::chrono::time_point<std::chrono::system_clock> A57_model_start;
-                    A57_model_start = std::chrono::system_clock::now();
-                    auto A57_model_start_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(A57_model_start);
-                    auto A57_model_start_epoch = A57_model_start_ms.time_since_epoch();
-                    LOCK_ACQUIRE(output_lck);
-                    std::cout << "[Overhead] Model calculation (A57) starts from " << A57_model_start_epoch.count() << ". " << std::endl;
-                    LOCK_RELEASE(output_lck);
+                    // std::chrono::time_point<std::chrono::system_clock> A57_model_start;
+                    // A57_model_start = std::chrono::system_clock::now();
+                    // auto A57_model_start_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(A57_model_start);
+                    // auto A57_model_start_epoch = A57_model_start_ms.time_since_epoch();
+                    // LOCK_ACQUIRE(output_lck);
+                    // std::cout << "[Overhead] Model calculation (A57) starts from " << A57_model_start_epoch.count() << ". " << std::endl;
+                    // LOCK_RELEASE(output_lck);
+                    struct timespec A57_start, A57_finish, A57_delta;
+                    clock_gettime(CLOCK_REALTIME, &A57_start);
 #endif
                     for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){ /* Compute Predictions according to Memory-boundness Values */
                       for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
@@ -2203,19 +2241,24 @@ int worker_loop(int nthread){
                       }
                     }
 #if defined Model_Computation_Overhead
-                    std::chrono::time_point<std::chrono::system_clock> A57_model_end;
-                    A57_model_end = std::chrono::system_clock::now();
-                    auto A57_model_end_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(A57_model_end);
-                    auto A57_model_end_epoch = A57_model_end_ms.time_since_epoch();
+                    // std::chrono::time_point<std::chrono::system_clock> A57_model_end;
+                    // A57_model_end = std::chrono::system_clock::now();
+                    // auto A57_model_end_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(A57_model_end);
+                    // auto A57_model_end_epoch = A57_model_end_ms.time_since_epoch();
+                    // LOCK_ACQUIRE(output_lck);
+                    // std::cout << "[Overhead] Model calculation (A57) ends " << A57_model_end_epoch.count() << ". " << std::endl;
+                    // LOCK_RELEASE(output_lck);
+                    clock_gettime(CLOCK_REALTIME, &A57_finish);
+                    sub_timespec(A57_start, A57_finish, &A57_delta);
                     LOCK_ACQUIRE(output_lck);
-                    std::cout << "[Overhead] Model calculation (A57) ends " << A57_model_end_epoch.count() << ". " << std::endl;
+                    printf("[Overhead] Model calculation (A57): %d.%.9ld\n", (int)A57_delta.tv_sec, A57_delta.tv_nsec);
                     LOCK_RELEASE(output_lck);
 #endif
                       // return -1;
                     
 //                     }else{
 //                       if(memory_boundness <= 0){ /* Execution time and power prediction according to the computed memory-boundness level */
-//                         memory_boundness = 0.0001;
+//                         memory_boundness = 0.001;
 //                         for(int freq_indx = 1; freq_indx < NUM_AVAIL_FREQ; freq_indx++){ /* Fill out PTT[other freqs]. Start from 1, which is next freq after 2.04, also skip 1.11GHz*/
 //                           if(freq_indx == NUM_AVAIL_FREQ/2){
 //                             continue;
@@ -2357,7 +2400,7 @@ int worker_loop(int nthread){
           auto train_end_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(train_end);
           auto train_end_epoch = train_end_ms.time_since_epoch();
           LOCK_ACQUIRE(output_lck);
-          std::cout << "[Congratulations!] All the training Phase finished. Trainging finished time: " << train_end_epoch.count() << ". " << std::endl;
+          std::cout << "[Congratulations!] All the training Phase finished. Training finished time: " << train_end_epoch.count() << ". " << std::endl;
           LOCK_RELEASE(output_lck);
         }
 #if 0
@@ -2638,14 +2681,13 @@ int worker_loop(int nthread){
     if((rand() % STEAL_ATTEMPTS == 0) && !stop)
 // #endif
     {
-      status_working[nthread] = 0;
+      // status_working[nthread] = 0;
       int attempts = gotao_nthreads;
 #ifdef SLEEP
 #if (defined RWSS_SLEEP)
       if(Sched == 3){
         idle_try++;
       }
-
 #endif
 #if (defined FCAS_SLEEP)
       if(Sched == 0){
@@ -2658,7 +2700,6 @@ int worker_loop(int nthread){
       }
 #endif
 #endif
-
       do{
         if(Sched == 2){
           if(DtoA <= maySteal_DtoA){
@@ -2932,7 +2973,6 @@ int worker_loop(int nthread){
         }
 #endif
 #endif
-        status_working[nthread] = 1;
         continue;
       }
     }
@@ -2975,7 +3015,7 @@ int worker_loop(int nthread){
 //         LOCK_RELEASE(output_lck);
 // #endif
         status[nthread] = 0;
-        status_working[nthread] = 0;
+        // status_working[nthread] = 0;
         tim.tv_sec = 0;
         tim.tv_nsec = limit;
         nanosleep(&tim , &tim2);
