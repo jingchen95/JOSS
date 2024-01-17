@@ -795,11 +795,11 @@ int PolyTask::optimized_search(int nthread, PolyTask * it){
 //     LOCK_RELEASE(output_lck);
 // #endif 
   // }
-#ifdef DEBUG
-  LOCK_ACQUIRE(output_lck);
-  std::cout << "[Fine-Test] " << it->get_timetable(cur_ddr_freq_index, cur_freq_index[0], 0, 1) << std::endl;
-  LOCK_RELEASE(output_lck);
-#endif  
+// #ifdef DEBUG
+//   LOCK_ACQUIRE(output_lck);
+//   std::cout << "[Fine-Test] " << it->get_timetable(cur_ddr_freq_index, cur_freq_index[0], 0, 1) << std::endl;
+//   LOCK_RELEASE(output_lck);
+// #endif  
   /* Step 1: first standard: check if the execution time of (current frequency of Denver, Denver, 2) < 1 ms? --- define as Fine-grained tasks --- Find out best core type, number of cores, doesn't change frequency */
   if(it->get_timetable(cur_ddr_freq_index, cur_freq_index[0], 0, 1) < FINE_GRAIN_THRESHOLD){
     float shortest_exec = 100000.0f;
@@ -994,6 +994,54 @@ int PolyTask::optimized_search(int nthread, PolyTask * it){
     }
     /* Find out the best execution place */
     int winner = 0;
+#ifdef ALLOWSTEALING
+    int current_best_width[NUMSOCKETS] = {1};
+    for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){ // for each cluster
+      winner = 0;
+      for(auto&& wid : ptt_layout[start_coreid[clus_id]]){
+#ifdef DEBUG
+        LOCK_ACQUIRE(output_lck);
+        std::cout << "[Optimized_Search] Cluster " << clus_id << ", width " << wid << ", execution_place_winner = " << execution_place_winner[clus_id][wid-1]<< std::endl;
+        LOCK_RELEASE(output_lck);
+#endif
+        if(execution_place_winner[clus_id][wid-1] > winner){
+          winner = execution_place_winner[clus_id][wid-1];
+          current_best_width[clus_id] = wid;
+#ifdef DEBUG
+          LOCK_ACQUIRE(output_lck);
+          //std::cout << "[Optimized_Search] Cluster " << clus_id << ", width " << wid << ", execution_place_winner = " << execution_place_winner[clus_id][wid-1] << ", current best width = " << wid << std::endl;
+          std::cout << "[Optimized_Search] Cluster " << clus_id << ", current best width = " << wid << std::endl;
+          LOCK_RELEASE(output_lck);
+#endif
+        }
+      }
+    }
+    // for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
+    //   if(execution_place_winner[clus_id][current_best_width[clus_id]-1] > winner){
+    //     winner = execution_place_winner[clus_id][current_best_width[clus_id]-1];
+    //     it->set_best_cluster(clus_id);
+    //     it->set_best_numcores(current_best_width[clus_id]);
+    //   }
+    // }
+    if(execution_place_winner[0][current_best_width[0]-1] > execution_place_winner[1][current_best_width[1]-1]){
+      it->set_best_cluster(0);
+      it->set_best_numcores(current_best_width[0]);
+      it->set_second_best_cluster(1);
+      // it->set_second_best_numcores(current_best_width[1]);
+      it->set_second_best_numcores(4);
+    }else{
+      it->set_best_cluster(1);
+      it->set_best_numcores(current_best_width[1]);
+      it->set_second_best_cluster(0);
+      it->set_second_best_numcores(current_best_width[0]);
+    }
+#ifdef DEBUG
+    LOCK_ACQUIRE(output_lck);
+    std::cout << "[Optimized_Search] The best execution place is (" << it->get_best_cluster() << ", " << it->get_best_numcores() << "). Second best execution place is (" \
+    << it->get_second_best_cluster() << ", " << it->get_second_best_numcores() << ")." << std::endl;
+    LOCK_RELEASE(output_lck);
+#endif
+#else
     for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){ // for each cluster
       for(auto&& wid : ptt_layout[start_coreid[clus_id]]){ 
 // #ifdef DEBUG
@@ -1013,6 +1061,7 @@ int PolyTask::optimized_search(int nthread, PolyTask * it){
         }
       }
     }
+#endif
     it->width = it->get_best_numcores();
     best_cluster = it->get_best_cluster();
     float energy_mini = 100000.0f;
@@ -1086,14 +1135,87 @@ int PolyTask::optimized_search(int nthread, PolyTask * it){
     }while(step_progress == 1);
     it->set_best_ddr_freq(cur_best_ddr_freq_idx);
     it->set_best_cpu_freq(cur_best_cpu_freq_idx);
-    it->set_enable_cpu_freq_change(true);
-    it->set_enable_ddr_freq_change(true);
 // #ifdef DEBUG
     LOCK_ACQUIRE(output_lck);
     std::cout << "[DEBUG] " << it->kernel_name << ": the optimal cluster Memory and CPU frequency: " << avail_ddr_freq[starting_ddr_freq_idx] << ", " << avail_freq[starting_cpu_freq_idx] << ", best cluster: " \
     << best_cluster << ", best width: " << it->width << std::endl;
     LOCK_RELEASE(output_lck);
 // #endif 
+#ifdef ALLOWSTEALING
+    int second_best_cluster = it->get_second_best_cluster();
+    float second_energy_mini = 100000.0f;
+    int second_starting_ddr_freq_idx = 0;
+    int second_starting_cpu_freq_idx = 0;
+    // float energy[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ] = {0.0f};
+    for(int i = 0; i < NUM_DDR_AVAIL_FREQ; i += NUM_DDR_AVAIL_FREQ-1){ // DDR Frequency index, 0 is highest DDR frequency (bottom), 1 is lowest DDR frequency (top)
+      for(int j = 0; j < NUM_AVAIL_FREQ; j += NUM_AVAIL_FREQ-1){ // CPU Frequency, 0 is highest CPU frequency (left), 1 is lowest CPU frequency (right) 
+        // energy[i][j] = Energy[i][j][it->get_best_cluster()][it->get_best_numcores()-1];
+        if(Energy[second_best_cluster][it->get_second_best_numcores()-1][i][j] < second_energy_mini){
+          second_energy_mini = Energy[second_best_cluster][it->get_second_best_numcores()-1][i][j];
+          second_starting_ddr_freq_idx = i;
+          second_starting_cpu_freq_idx = j;
+        }
+      }
+    }
+    float second_energy_thres = Energy[second_best_cluster][it->get_second_best_numcores()-1][second_starting_ddr_freq_idx][second_starting_cpu_freq_idx];
+    int second_visit_flag[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ] = {0}; // if the position has been visited before, it is -1,this is meant to avoid recalculate the energy for the same positions in two steps
+    second_visit_flag[second_starting_ddr_freq_idx][second_starting_cpu_freq_idx] = 1; // the starting position has been computed, so set 1
+    int second_step_progress;
+    int second_cur_best_ddr_freq_idx = second_starting_ddr_freq_idx;
+    int second_cur_best_cpu_freq_idx = second_starting_cpu_freq_idx;
+    do{
+      second_step_progress = 0;
+      second_starting_ddr_freq_idx = second_cur_best_ddr_freq_idx;
+      second_starting_cpu_freq_idx = second_cur_best_cpu_freq_idx;
+      for(int i = 0; i < 8; i++){
+        if(second_starting_ddr_freq_idx + x[i] >= 0 && second_starting_cpu_freq_idx + y[i] >= 0 && second_starting_ddr_freq_idx + x[i] < NUM_DDR_AVAIL_FREQ && second_starting_cpu_freq_idx + y[i] < NUM_AVAIL_FREQ){
+          if(second_visit_flag[second_starting_ddr_freq_idx + x[i]][second_starting_cpu_freq_idx + y[i]] == 0) { // If this position hasn't been visited yet
+            /* Idle power computation */
+            float idleP_clus = 0.0f;
+            if(sum_cluster_active[1 - second_best_cluster] == 0){ /* the number of active cores is zero in another cluster */
+              idleP_clus = idle_power[second_starting_ddr_freq_idx + x[i]][second_starting_cpu_freq_idx + y[i]][second_best_cluster] \
+              + idle_power[second_starting_ddr_freq_idx + x[i]][second_starting_cpu_freq_idx + y[i]][1-second_best_cluster]; /* Then equals idle power of whole chip */
+            }else{
+              idleP_clus = idle_power[second_starting_ddr_freq_idx + x[i]][second_starting_cpu_freq_idx + y[i]][second_best_cluster];
+            }
+            sum_cluster_active[second_best_cluster] = (sum_cluster_active[second_best_cluster] < it->get_second_best_numcores())? it->get_second_best_numcores() : sum_cluster_active[second_best_cluster];
+            float idle_P = idleP_clus * it->get_second_best_numcores() / sum_cluster_active[second_best_cluster];
+            float CPUPower_P = it->get_cpupowertable(second_starting_ddr_freq_idx + x[i], second_starting_cpu_freq_idx + y[i], second_best_cluster, it->get_second_best_numcores()-1); 
+            float DDRPower_P = it->get_ddrpowertable(second_starting_ddr_freq_idx + x[i], second_starting_cpu_freq_idx + y[i], second_best_cluster, it->get_second_best_numcores()-1); 
+            float Time_P = it->get_timetable(second_starting_ddr_freq_idx + x[i], second_starting_cpu_freq_idx + y[i], second_best_cluster, it->get_second_best_numcores()-1); 
+            float Energy_P = Time_P * (CPUPower_P -idleP_clus + idle_P + DDRPower_P);
+            second_visit_flag[second_starting_ddr_freq_idx + x[i]][second_starting_cpu_freq_idx + y[i]] = 1; // visited
+// #ifdef DEBUG
+//             LOCK_ACQUIRE(output_lck);
+//             std::cout << "[Optimized_Search] Position: (" << second_starting_ddr_freq_idx + x[i] << ", " << starting_cpu_freq_idx + y[i] << "): CPU power=" << CPUPower_P - idleP_clus + idle_P << ", memory power=" << DDRPower_P << ", execution time=" << Time_P << ". Energy = " << Energy_P << std::endl;
+//             LOCK_RELEASE(output_lck);
+// #endif
+            if(Energy_P < second_energy_thres){
+              second_energy_thres = Energy_P;
+              second_cur_best_ddr_freq_idx = second_starting_ddr_freq_idx + x[i]; // Update new starting frequency index per step
+              second_cur_best_cpu_freq_idx = second_starting_cpu_freq_idx + y[i];
+              second_step_progress = 1;
+// #ifdef DEBUG
+//             LOCK_ACQUIRE(output_lck);
+//             std::cout << "[Optimized_Search] Position: (" << second_cur_best_ddr_freq_idx << ", " << second_cur_best_cpu_freq_idx << ") becomes bew winner!" << std::endl;
+//             LOCK_RELEASE(output_lck);
+// #endif
+            }
+          }
+        }
+      }
+    }while(second_step_progress == 1);
+    it->set_second_best_ddr_freq(second_cur_best_ddr_freq_idx);
+    it->set_second_best_cpu_freq(second_cur_best_cpu_freq_idx);
+#ifdef DEBUG
+    LOCK_ACQUIRE(output_lck);
+    std::cout << "[DEBUG] " << it->kernel_name << ": the SECOND optimal cluster Memory and CPU frequency: " << avail_ddr_freq[second_starting_ddr_freq_idx] << ", " << avail_freq[second_starting_cpu_freq_idx] << ", best cluster: " \
+    << second_best_cluster << ", best width: " << it->get_second_best_numcores() << std::endl;
+    LOCK_RELEASE(output_lck);
+#endif 
+#endif
+    it->set_enable_cpu_freq_change(true);
+    it->set_enable_ddr_freq_change(true);
   }
 #if defined Search_Overhead
   clock_gettime(CLOCK_REALTIME, &finish1);
@@ -1114,11 +1236,18 @@ int PolyTask::find_best_config(int nthread, PolyTask * it){ /* The kernel task h
   clock_gettime(CLOCK_REALTIME, &start2);
 #endif
   float shortest_exec = 100000.0f;
+#ifdef perf_improve
+  float optimalconfig_time = 100000.0f; 
+  float energy_prediction[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS] = {0.0f}; 
+#endif
   float energy_pred = 0.0f;
   float idleP_cluster = 0.0f;
-  int sum_cluster_active[NUMSOCKETS] = {0};
+  int sum_cluster_active[NUMSOCKETS] = {0}; // number of active cores in each cluster, meant to compute the static CPU power distribution on each concurrent task
+  int sum_active_cores = 0;                 // number of active cores in total, meant to compute the static DDR power distribution on each concurrent task
+  float idleP_DDR_chip[NUM_DDR_AVAIL_FREQ] = {1.152, 0.73, 0.346, 0.269, 0.211};             // Profile the static DDR power through the power reading when system is idle, unit is watt
   for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){ /* Get the number of active cores in each cluster */
     sum_cluster_active[clus_id] = std::accumulate(status+start_coreid[clus_id], status+end_coreid[clus_id], 0); 
+    //sum_active_cores += sum_cluster_active[clus_id];
 #ifdef DEBUG
     LOCK_ACQUIRE(output_lck);
     std::cout << "[DEBUG] Number of active cores in cluster " << clus_id << ": " << sum_cluster_active[clus_id] << ". status[0] = " << status[0] \
@@ -1179,9 +1308,17 @@ int PolyTask::find_best_config(int nthread, PolyTask * it){ /* The kernel task h
       //   it->granularity_fine = true;
       // }
     }else{ /* Coarse-grained tasks --- Find out best frequency, core type, number of cores */
-      for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){
-      for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
-        for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
+#ifdef perf_contraints
+      float ref_perf = it->get_timetable(0, 0, 0, 1); // Four args: ddr_freq_indx = 0: highest DDR frequency, freq_indx = 0: highest CPU frequency, clus_id = 0: Denver cluster, wid-1 = 1: with 2 Denver cores
+#endif
+#ifdef JOSS_NoMemDVFS
+      for(int ddr_freq_indx = 0; ddr_freq_indx < 1; ddr_freq_indx++) // JOSS without memory DVFS tuning knob, thereby fixing the ddr freq at the highest
+#else
+      for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++)
+#endif
+      {
+        for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
+          for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
           if(sum_cluster_active[1-clus_id] == 0){ /* the number of active cores is zero in another cluster */
             idleP_cluster = idle_power[ddr_freq_indx][freq_indx][clus_id] + idle_power[ddr_freq_indx][freq_indx][1-clus_id]; /* Then equals idle power of whole chip */
 // #ifdef DEBUG
@@ -1198,29 +1335,63 @@ int PolyTask::find_best_config(int nthread, PolyTask * it){ /* The kernel task h
 // #endif 
           }
           for(auto&& wid : ptt_layout[start_coreid[clus_id]]){
-            sum_cluster_active[clus_id] = (sum_cluster_active[clus_id] < wid)? wid : sum_cluster_active[clus_id];
-            float idleP = idleP_cluster * wid / sum_cluster_active[clus_id];
-            float CPUPowerP = it->get_cpupowertable(ddr_freq_indx, freq_indx, clus_id, wid-1); /* includes idle power + runtime power, so when computing energy, we need to remove the replicated idle power from concurrent tasks */
-            float DDRPowerP = it->get_ddrpowertable(ddr_freq_indx, freq_indx, clus_id, wid-1);
-            float timeP = it->get_timetable(ddr_freq_indx, freq_indx, clus_id, wid-1);
-#ifdef EDP_TEST_
-            energy_pred = timeP * timeP * (CPUPowerP + idleP);
-#else
-            energy_pred = timeP * (CPUPowerP - idleP_cluster + idleP + DDRPowerP);
+	          float timeP = it->get_timetable(ddr_freq_indx, freq_indx, clus_id, wid-1);
+#ifdef perf_contraints
+            if(timeP > ref_perf * (1 + PERF_SLOWDOWN)){
+#ifdef DEBUG
+	      LOCK_ACQUIRE(output_lck);
+	      std::cout << "[DEBUG] Memory frequency: " << avail_ddr_freq[ddr_freq_indx] <<  ", CPU frequency: " << avail_freq[freq_indx] << ", cluster " << clus_id << ", width "<< wid << ", execution time exceeds the constraint! Skip! \n";
+	      LOCK_RELEASE(output_lck);
 #endif
+              continue; // jump to next loop since the performance is over PERF_SLOWDOWN
+            }else{    
+#endif
+            sum_cluster_active[clus_id] = (sum_cluster_active[clus_id] < wid)? wid : sum_cluster_active[clus_id];
+            float idleP_cpu = idleP_cluster * wid / sum_cluster_active[clus_id]; // Static CPU power distribution on this task
+            float CPUPowerP = it->get_cpupowertable(ddr_freq_indx, freq_indx, clus_id, wid-1); /* includes idle power + runtime power, so when computing energy, we need to remove the replicated idle power from concurrent tasks */
+            // for(int c_id = 0; c_id < NUMSOCKETS; c_id++){
+            //   sum_active_cores += sum_cluster_active[c_id];
+            // }
+            float idleP_ddr = idleP_DDR_chip[ddr_freq_indx] * wid / sum_cluster_active[clus_id]; // Static DDR power distribution on this task
+            float DDRPowerP = it->get_ddrpowertable(ddr_freq_indx, freq_indx, clus_id, wid-1);
+            float CPUPower = (CPUPowerP - idleP_cluster > 0)? CPUPowerP - idleP_cluster + idleP_cpu : idleP_cpu;
+            float DDRPower = (DDRPowerP - idleP_DDR_chip[ddr_freq_indx] > 0)? DDRPowerP - idleP_DDR_chip[ddr_freq_indx] + idleP_ddr : idleP_ddr;
 // #ifdef DEBUG
 //             LOCK_ACQUIRE(output_lck);
-//             std::cout << "[DEBUG] Memory frequency: " << avail_ddr_freq[ddr_freq_indx] <<  ", CPU frequency: " << avail_freq[freq_indx] << ", cluster " << clus_id << ", width "<< wid << ", sum_cluster_active = " << sum_cluster_active[clus_id] \
-//             << ", CPU power " << CPUPowerP- idleP_cluster + idleP << ", Memory power " << DDRPowerP << ", execution time " << timeP << ", energy prediction: " << energy_pred << std::endl;
+//             std::cout << "idleP_ddr = " << idleP_ddr << ". DDR power from table = " << DDRPowerP << ", Final DDR power = " << DDRPower << std::endl;
 //             LOCK_RELEASE(output_lck);
 // #endif 
+#ifdef EDP_PER_TASK
+            energy_pred = timeP * timeP * (CPUPower + DDRPower); // JOSS-default to minimize EDP per task
+#else
+#ifdef perf_improve
+            energy_prediction[ddr_freq_indx][freq_indx][clus_id][wid] = timeP * (CPUPower + DDRPower);
+#else
+            energy_pred = timeP * (CPUPower + DDRPower); // JOSS-default to minimize energy consumption per task
+#endif
+#endif
+#ifdef DEBUG
+            LOCK_ACQUIRE(output_lck);
+            std::cout << "[JING] Memory frequency: " << avail_ddr_freq[ddr_freq_indx] <<  ", CPU frequency: " << avail_freq[freq_indx] << ", cluster " << clus_id << ", width "<< wid << ", sum_cluster_active = " << sum_cluster_active[clus_id] \
+            << ", CPU power " << CPUPower << ", Memory power " << DDRPower << ", execution time " << timeP << ", energy prediction: " << energy_pred << std::endl;
+            LOCK_RELEASE(output_lck);
+#endif 
+#ifdef perf_improve
+            if(energy_prediction[ddr_freq_indx][freq_indx][clus_id][wid] < shortest_exec){
+              optimalconfig_time = timeP; 
+              shortest_exec = energy_prediction[ddr_freq_indx][freq_indx][clus_id][wid];
+#else
             if(energy_pred < shortest_exec){
               shortest_exec = energy_pred;
+#endif
               it->set_best_ddr_freq(ddr_freq_indx);
               it->set_best_cpu_freq(freq_indx);
               it->set_best_cluster(clus_id);
               it->set_best_numcores(wid);
             }
+#ifdef perf_contraints
+          }
+#endif
           }
         }
       }
@@ -1232,6 +1403,43 @@ int PolyTask::find_best_config(int nthread, PolyTask * it){ /* The kernel task h
     std::cout << "[DEBUG] " << it->kernel_name << ": the optimal cluster Memory and CPU frequency: " << avail_ddr_freq[it->get_best_ddr_freq()] << ", " << avail_freq[it->get_best_cpu_freq()] << ", best cluster: " << it->get_best_cluster() << ", best width: " << it->get_best_numcores() << std::endl;
     LOCK_RELEASE(output_lck);
 // #endif 
+#ifdef perf_improve
+    float AllowTime = optimalconfig_time / PERF_SPEEDUP;
+#ifdef DEBUG
+    LOCK_ACQUIRE(output_lck);
+    std::cout << "[DEBUG] " << it->kernel_name << ": Execution time of the most energy efficient config is " << optimalconfig_time << ". With " << PERF_SPEEDUP << "X, execution time should be within " << AllowTime << std::endl;
+    LOCK_RELEASE(output_lck);
+#endif 
+    if(AllowTime < std::min(it->get_timetable(0, 0, 0, 1), it->get_timetable(0, 0, 1, 3))){ // If performance improvenents is too much, then just run with the fastest one
+      it->set_best_ddr_freq(0);
+      it->set_best_cpu_freq(0);
+      it->set_best_cluster(0);
+      it->set_best_numcores(2);
+    }else{
+      shortest_exec = 100000.0f;
+      for(int ddr_freq_indx = 0; ddr_freq_indx < NUM_DDR_AVAIL_FREQ; ddr_freq_indx++){
+        for(int freq_indx = 0; freq_indx < NUM_AVAIL_FREQ; freq_indx++){
+          for(int clus_id = 0; clus_id < NUMSOCKETS; clus_id++){
+            for(auto&& wid : ptt_layout[start_coreid[clus_id]]){
+              float timeP = it->get_timetable(ddr_freq_indx, freq_indx, clus_id, wid-1);
+              if(timeP <= AllowTime && energy_prediction[ddr_freq_indx][freq_indx][clus_id][wid] < shortest_exec){
+                shortest_exec = energy_prediction[ddr_freq_indx][freq_indx][clus_id][wid];
+                it->set_best_ddr_freq(ddr_freq_indx);
+                it->set_best_cpu_freq(freq_indx);
+                it->set_best_cluster(clus_id);
+                it->set_best_numcores(wid);
+              }
+            }
+          }
+        }
+      }
+    }
+// #ifdef DEBUG
+    LOCK_ACQUIRE(output_lck);
+    std::cout << "[DEBUG] " << it->kernel_name << ": For " << PERF_SPEEDUP << "X performance improvement, the new optimal cluster Memory and CPU frequency: " << avail_ddr_freq[it->get_best_ddr_freq()] << ", " << avail_freq[it->get_best_cpu_freq()] << ", best cluster: " << it->get_best_cluster() << ", best width: " << it->get_best_numcores() << std::endl;
+    LOCK_RELEASE(output_lck);
+// #endif    
+#endif    
   }
 #if defined Search_Overhead
   clock_gettime(CLOCK_REALTIME, &finish2);
@@ -1267,6 +1475,15 @@ int PolyTask::update_best_config(int nthread, PolyTask * it){
     LOCK_RELEASE(output_lck);
 #endif 
   }
+  else{ /* Incoming tasks are coarse-grained */ 
+    // it-> = it->get_best_cpu_freq();
+#ifdef DEBUG
+    LOCK_ACQUIRE(output_lck);
+    std::cout << "[DEBUG] For task " << it->taskid << ", BEST CPU frequency: " << avail_freq[it->get_best_cpu_freq()] << ", BEST Memory frequency: " << avail_ddr_freq[it->get_best_ddr_freq()] \
+      << ", it->leader: " << it->leader << ", it->width: " << it->width << ".\n";
+    LOCK_RELEASE(output_lck);
+#endif    
+  }
   return it->leader;
 }
 
@@ -1280,7 +1497,7 @@ int PolyTask::ERASE_Target_Energy_2(int nthread, PolyTask * it){
       for(auto&& width : ptt_layout[start_coreid[cluster]]) {
         auto&& ptt_val = 0.0f;
         ptt_val = it->get_timetable(0, ptt_freq_index[cluster], cluster, width - 1);
-#ifdef TRAIN_METHOD_1 /* Allow three tasks to train the same config, pros: training is faster, cons: not apply to memory-bound tasks */
+#ifdef TRAIN_METHOD_1 /* Allow NUM_TRAIN_TASKS tasks to train the same config, pros: training is faster, cons: not apply to memory-bound tasks */
         if(it->get_PTT_UpdateFlag(ptt_freq_index[cluster], cluster, width-1) < NUM_TRAIN_TASKS){
           it->width  = width;
           it->leader = start_coreid[cluster] + (rand() % ((end_coreid[cluster] - start_coreid[cluster])/width)) * width;
@@ -2512,8 +2729,13 @@ PolyTask * PolyTask::commit_and_wakeup(int _nthread){
 #endif
 
 #if (defined ERASE_target_edp_method2)
-// || (defined ERASE_target_energy_method2)
+//  || (defined ERASE_target_energy_method2)
     int n = (out.size() > 0) && (ptt_full)? out.size() : 0; 
+// #ifdef DEBUG
+//       LOCK_ACQUIRE(output_lck);
+//       std::cout << "[0] N = " << n << std::endl;
+//       LOCK_RELEASE(output_lck); 
+// #endif
     D_give_A = 0;
     float standard = 1.0;
     float edp_test = 0.0;
@@ -2536,7 +2758,8 @@ PolyTask * PolyTask::commit_and_wakeup(int _nthread){
 #ifdef ERASE_target_energy_method2
         float Total_energy = 0.0;
         // ERASE - Target Energy
-        Total_energy = (n-allow_steal) * best_perf_config[best_cluster_config] * best_power_config[best_cluster_config] + allow_steal * best_perf_config[second_best_cluster_config] * best_power_config[second_best_cluster_config];
+        //Total_energy = (n-allow_steal) * best_perf_config[best_cluster_config] * best_power_config[best_cluster_config] + allow_steal * best_perf_config[second_best_cluster_config] * best_power_config[second_best_cluster_config];
+        Total_energy = (n-allow_steal) * 0.0322308 *(2.70386 + 0.24866) + allow_steal * 0.0543954 * (2.29105+0.283341);
 #ifdef DEBUG
         LOCK_ACQUIRE(output_lck);
         std::cout << "[2] Allow_steal = " << allow_steal << ". Total Energy = " << Total_energy <<  ".\n";
@@ -2814,25 +3037,25 @@ PolyTask * PolyTask::commit_and_wakeup(int _nthread){
           //   worker_ready_q[(*it)->leader].push_back(*it);
           //   LOCK_RELEASE(worker_lock[(*it)->leader]);
           // }else{
-          ERASE_Target_Energy_2(_nthread, (*it));
+          ERASE_Target_Energy_2(_nthread, (*it));  /* JOSS design */
           // LOCK_ACQUIRE(worker_lock[(*it)->leader]);
           // worker_ready_q[(*it)->leader].push_back(*it);
           // LOCK_RELEASE(worker_lock[(*it)->leader]);
           // } 
-
-          // D_give_A = 2;
-          // if((*it)->get_bestconfig_state()==true && std::distance(out.begin(), it) >= out.size() - D_give_A){
-          //   (*it)->leader = 2;   
-          //   (*it)->width =  4;
-          // }
+#ifdef AcrossCLustersTest
+          // D_give_A = 1; /* Simple test: when we allow certail number of work stealings across two clusters */
+          if(D_give_A > 0 && (*it)->get_bestconfig_state()==true && std::distance(out.begin(), it) >= out.size() - D_give_A){
+            (*it)->leader = 2;   
+            (*it)->width =  4; /* Simply define the <A57, 2 (4)> is the most energy efficient config when A57 steals tasks from Denver cores */
+          }
           // else{
           //   (*it)->leader = 0;
           //   (*it)->width = 2;
           // }
+#endif          
           LOCK_ACQUIRE(worker_lock[(*it)->leader]);
           worker_ready_q[(*it)->leader].push_back(*it);
           LOCK_RELEASE(worker_lock[(*it)->leader]);
-
 #endif
 
 #ifdef ERASE_target_perf
@@ -2901,7 +3124,39 @@ PolyTask * PolyTask::commit_and_wakeup(int _nthread){
 // #endif
 //          } 
 
-        int ndx = 0;
+        if((*it)->tasktype == 0){ // FWD
+          (*it)->leader = 0;
+          (*it)->width = 2;
+          LOCK_ACQUIRE(worker_lock[(*it)->leader]);
+          worker_ready_q[(*it)->leader].push_back(*it);
+          LOCK_RELEASE(worker_lock[(*it)->leader]);
+        }
+        if((*it)->tasktype == 1){ // BDIV
+          (*it)->leader = 0;
+          (*it)->width = 2;
+          LOCK_ACQUIRE(worker_lock[(*it)->leader]);
+          worker_ready_q[(*it)->leader].push_back(*it);
+          LOCK_RELEASE(worker_lock[(*it)->leader]);
+        }
+        if((*it)->tasktype == 2){ // BMOD
+          (*it)->leader = 0;
+          (*it)->width = 2;
+          LOCK_ACQUIRE(worker_lock[(*it)->leader]);
+          worker_ready_q[(*it)->leader].push_back(*it);
+          LOCK_RELEASE(worker_lock[(*it)->leader]);
+        }
+        if((*it)->tasktype == 3){ // LU0
+          (*it)->leader = 0;
+          (*it)->width = 2;
+          LOCK_ACQUIRE(worker_lock[(*it)->leader]);
+          worker_ready_q[(*it)->leader].push_back(*it);
+          LOCK_RELEASE(worker_lock[(*it)->leader]);
+        }
+        // (*it)->leader = 0;
+        // (*it)->width = 1;
+        // LOCK_ACQUIRE(worker_lock[(*it)->leader]);
+        // worker_ready_q[(*it)->leader].push_back(*it);
+        // LOCK_RELEASE(worker_lock[(*it)->leader]);
         // Case 1: EDP Test for A57 borrow n tasks
 /*        if(std::distance(out.begin(), it) >= out.size() - 1){
           ndx = 2;
@@ -2917,14 +3172,15 @@ PolyTask * PolyTask::commit_and_wakeup(int _nthread){
         // (*it)->leader = ndx;
         // (*it)->width = 1;
 */
-        LOCK_ACQUIRE(worker_lock[ndx]);
-        worker_ready_q[ndx].push_back(*it);
-        LOCK_RELEASE(worker_lock[ndx]);
-#ifdef DEBUG
-        LOCK_ACQUIRE(output_lck);
-        std::cout <<"[RWS] Task "<< (*it)->taskid <<" is pushed to WSQ of thread "<< ndx << std::endl;
-        LOCK_RELEASE(output_lck);
-#endif
+        // int ndx = 0;
+//         LOCK_ACQUIRE(worker_lock[ndx]);
+//         worker_ready_q[ndx].push_back(*it);
+//         LOCK_RELEASE(worker_lock[ndx]);
+// #ifdef DEBUG
+//         LOCK_ACQUIRE(output_lck);
+//         std::cout <<"[RWS] Task "<< (*it)->taskid <<" is pushed to WSQ of thread "<< ndx << std::endl;
+//         LOCK_RELEASE(output_lck);
+// #endif
 			}
     }
   }

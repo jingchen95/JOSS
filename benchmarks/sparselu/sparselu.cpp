@@ -27,15 +27,20 @@ vector<vector<AssemblyTask*>> dependency_matrix;
 using namespace xitao;
 using namespace std;
 
-float LU0::time_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float FWD::time_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float BDIV::time_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float BMOD::time_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float LU0::time_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float FWD::time_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float BDIV::time_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float BMOD::time_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
 
-float LU0::power_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float FWD::power_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float BDIV::power_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float BMOD::power_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float LU0::cpu_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float FWD::cpu_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float BDIV::cpu_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float BMOD::cpu_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+
+float LU0::ddr_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float FWD::ddr_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float BDIV::ddr_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float BMOD::ddr_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
 
 uint64_t LU0::cycle_table[NUMFREQ][NUMSOCKETS][XITAO_MAXTHREADS];
 uint64_t FWD::cycle_table[NUMFREQ][NUMSOCKETS][XITAO_MAXTHREADS];
@@ -57,15 +62,25 @@ bool FWD::best_config_state;
 bool BDIV::best_config_state;
 bool BMOD::best_config_state;
 
-bool LU0::enable_freq_change;
-bool FWD::enable_freq_change;
-bool BDIV::enable_freq_change;
-bool BMOD::enable_freq_change;
+bool LU0::enable_cpu_freq_change;
+bool FWD::enable_cpu_freq_change;
+bool BDIV::enable_cpu_freq_change;
+bool BMOD::enable_cpu_freq_change;
 
-int LU0::best_freqindex;
-int FWD::best_freqindex;
-int BDIV::best_freqindex;
-int BMOD::best_freqindex;
+bool LU0::enable_ddr_freq_change;
+bool FWD::enable_ddr_freq_change;
+bool BDIV::enable_ddr_freq_change;
+bool BMOD::enable_ddr_freq_change;
+
+int LU0::best_cpufreqindex;
+int FWD::best_cpufreqindex;
+int BDIV::best_cpufreqindex;
+int BMOD::best_cpufreqindex;
+
+int LU0::best_ddrfreqindex;
+int FWD::best_ddrfreqindex;
+int BDIV::best_ddrfreqindex;
+int BMOD::best_ddrfreqindex;
 
 int LU0::best_cluster;
 int FWD::best_cluster;

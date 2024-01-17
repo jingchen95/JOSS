@@ -96,6 +96,16 @@ public:
   virtual int get_best_ddr_freq() = 0;
   virtual int get_best_cluster() = 0;
   virtual int get_best_numcores() = 0;
+#ifdef ALLOWSTEALING
+  virtual void set_second_best_cpu_freq(int freq_index) = 0;
+  virtual void set_second_best_ddr_freq(int ddr_freq_index) = 0;
+  virtual void set_second_best_cluster(int clusterid) = 0;
+  virtual void set_second_best_numcores(int width) = 0;
+  virtual int get_second_best_cpu_freq() = 0;
+  virtual int get_second_best_ddr_freq() = 0;
+  virtual int get_second_best_cluster() = 0;
+  virtual int get_second_best_numcores() = 0;
+#endif
   virtual void increment_PTT_UpdateFinish(int freq_index, int clusterid, int index) = 0;
   virtual float get_PTT_UpdateFinish(int freq_index, int clusterid,int index) = 0;
   virtual void increment_PTT_UpdateFlag(int freq_index, int clusterid, int index) = 0;

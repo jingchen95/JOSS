@@ -1,3 +1,4 @@
+#include <fstream> 
 #include "fibonacci.h"
 /*! @example 
  @brief A a program that calculates the Nth Fibonacci term in parallel using XiTAO\n
@@ -7,14 +8,17 @@
  \param grain_size := when to stop creating TAOs (the higher the coarser creation)\n
 */
 
-float FibTAO::time_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float FibTAO::power_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float FibTAO::time_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float FibTAO::cpu_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float FibTAO::ddr_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
 uint64_t FibTAO::cycle_table[NUMFREQ][NUMSOCKETS][XITAO_MAXTHREADS];
 float FibTAO::mb_table[NUMSOCKETS][XITAO_MAXTHREADS];
 bool FibTAO::time_table_state[NUMSOCKETS+1];
 bool FibTAO::best_config_state;
-bool FibTAO::enable_freq_change;
-int FibTAO::best_freqindex;
+bool FibTAO::enable_cpu_freq_change;
+bool FibTAO::enable_ddr_freq_change;
+int FibTAO::best_cpufreqindex;
+int FibTAO::best_ddrfreqindex;
 int FibTAO::best_cluster;
 int FibTAO::best_width;
 std::atomic<int> FibTAO::PTT_UpdateFlag[NUMSOCKETS][XITAO_MAXTHREADS][XITAO_MAXTHREADS];
@@ -77,7 +81,10 @@ int main(int argc, char** argv) {
   std::chrono::duration<double> elapsed_seconds = end-start;
   std::time_t end_time = std::chrono::system_clock::to_time_t(end);
   std::cout << epoch1.count() << "\t" <<  epoch1_end.count() << ", execution time: " << elapsed_seconds.count() << "s. " << std::endl;
-
+  std::ofstream timetask;
+  timetask.open("data_process.sh", std::ios_base::app);
+  timetask << "python Energy.py " << epoch1.count() << "\t" <<  epoch1_end.count() << "\n";
+  timetask.close();
   // xitao::stop("Time in XiTAO");
   // start the timer
   // xitao::start("Time in OpenMP");

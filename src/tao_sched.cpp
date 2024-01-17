@@ -1112,31 +1112,31 @@ int worker_loop(int nthread){
       else 
       if(st->type == TASK_ASSEMBLY){
         AssemblyTask *assembly = (AssemblyTask *) st;
-#if defined(TX2)
-        if(Sched == 3){
-          assembly->leader = nthread / assembly->width * assembly->width; // homogenous calculation of leader core
-        }
-#endif
+// #if defined(TX2)
+//         if(Sched == 3){
+//           assembly->leader = nthread / assembly->width * assembly->width; // homogenous calculation of leader core
+//         }
+// #endif
 #if defined(Haswell) || defined(CATS)
         assembly->leader = nthread / assembly->width * assembly->width;
 #endif
         /* In some applications, pretty loose task dependencies (very high parallelism), so here we need to check if tasks are going to run with best config.
         Otherwise, tasks will be executed with the original setting config */
         if(global_training == true && assembly->tasktype < num_kernels){ 
-          if(assembly->get_bestconfig_state() == false){
-            assembly->set_bestconfig_state(true);
+          if(assembly->get_bestconfig_state() == false){    
 #if defined Exhastive_Search
             assembly->find_best_config(nthread, assembly);
 #endif
 #if defined Optimized_Search
             assembly->optimized_search(nthread, assembly);
 #endif
+            assembly->set_bestconfig_state(true);
           }else{
             if(assembly->get_bestconfig == false){
               assembly->update_best_config(nthread, assembly);
 #ifdef DEBUG
               LOCK_ACQUIRE(output_lck);
-              std::cout << "[Jing-DEBUG] Task " << assembly->taskid << " is wrong here? " << std::endl;
+              std::cout << "[Jing-DEBUG] assembly->get_bestconfig_state() = " << assembly->get_bestconfig_state() <<". Task " << assembly->taskid << " is wrong here? " << std::endl;
               LOCK_RELEASE(output_lck);
 #endif
             }
@@ -1151,7 +1151,11 @@ int worker_loop(int nthread){
         (1) Coarse-grained task: check if it is needed to tune the frequency; 
         (2) Fine-grained task: check the WQs of the cluster include N consecutive same tasks, that the total execution time of these N tasks > threshold, then search for the best frequency and then tune the frequency */
         if(global_training == true && assembly->get_bestconfig_state() == true){
+#ifdef AcrossCLustersTest
+          int best_cluster = assembly->leader < 2? 0:1; // MatrixMul test across clusters, A57 steal task from Denver, so best cluster becomes 1
+#else
           int best_cluster = assembly->get_best_cluster();
+#endif
           int best_width = assembly->get_best_numcores();
           if(assembly->granularity_fine == true && assembly->get_enable_cpu_freq_change() == false && assembly->get_enable_ddr_freq_change() == false){ /* (2) Fine-grained tasks && not allowed to do frequency change currently */
 #ifdef DEBUG
@@ -1226,12 +1230,12 @@ int worker_loop(int nthread){
                         float DDRPowerP = assembly->get_ddrpowertable(ddr_freq_indx, freq_indx, best_cluster, best_width-1);
                         float timeP = assembly->get_timetable(ddr_freq_indx, freq_indx, best_cluster, best_width-1);
                         energy_pred = timeP * (CPUPowerP - idleP_cluster + idleP + DDRPowerP); 
-// #ifdef DEBUG
+#ifdef DEBUG
                         LOCK_ACQUIRE(output_lck);
                         std::cout << "[DEBUG] For the fine-grained tasks, Memory frequency: " << avail_ddr_freq[ddr_freq_indx] <<  ", CPU frequency: " << avail_freq[freq_indx] << " on cluster " << best_cluster << " with width "<< best_width \
                         << ", CPU power " << CPUPowerP- idleP_cluster + idleP << ", Memory power " << DDRPowerP << ", execution time " << timeP << ", energy prediction: " << energy_pred << std::endl;
                         LOCK_RELEASE(output_lck);
-// #endif 
+#endif 
                         if(energy_pred < shortest_exec){
                           shortest_exec = energy_pred;
                           assembly->set_best_cpu_freq(freq_indx);
@@ -1239,11 +1243,11 @@ int worker_loop(int nthread){
                         }
                       }
                     }
-// #ifdef DEBUG
+#ifdef DEBUG
                     LOCK_ACQUIRE(output_lck);
                     std::cout << "[DEBUG] For the fine-grained tasks, get the optimal CPU and Memory frequency: " << avail_freq[assembly->get_best_cpu_freq()] << ", " << avail_ddr_freq[assembly->get_best_ddr_freq()] << std::endl;
                     LOCK_RELEASE(output_lck);
-// #endif 
+#endif 
                     (*it)->set_enable_cpu_freq_change(true); // Set the frequency change state for the current testing fine-grained task
                     (*it)->set_enable_ddr_freq_change(true);
                     goto consecutive_true; // No more searching
@@ -1354,7 +1358,7 @@ int worker_loop(int nthread){
           // assembly->best_ddr_freq = avail_ddr_freq[assembly->get_best_ddr_freq()];
 #ifdef DEBUG
           LOCK_ACQUIRE(output_lck);
-          std::cout << "[DEBUG] " << assembly->kernel_name << " task " << assembly->taskid << " is allowed to do Memory Frequency Scaling. \n";
+          std::cout << "[DEBUG] " << assembly->kernel_name << " task " << assembly->taskid << " is allowed to do Memory Frequency Scaling. Its best DDR freq index = " << assembly->get_best_ddr_freq() << ". Current DDR frequency is = " << cur_ddr_freq << ", index = " << cur_ddr_freq_index << ". \n";
           LOCK_RELEASE(output_lck);
 #endif
           if(assembly->get_best_ddr_freq() != cur_ddr_freq_index){
@@ -1754,10 +1758,13 @@ int worker_loop(int nthread){
                           - 0.039597 * cpu_freq_scaling * ddr_freq_scaling - 0.1040418);
 #endif
 #if defined Performance_Model_3
-                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 1.1308933 * memory_boundness - 0.0018929 * cpu_freq_scaling \
-                          - 0.2420771 * ddr_freq_scaling - 30.7739177 * pow(memory_boundness, 2) - 0.6263244 * memory_boundness * cpu_freq_scaling \
-                          + 0.0168092 * pow(cpu_freq_scaling, 2) + 3.5389818 * memory_boundness * ddr_freq_scaling \
-                          - 0.039597 * cpu_freq_scaling * ddr_freq_scaling + 0.0744132 * pow(ddr_freq_scaling, 2) + 0.1485836);
+                          // ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling + 1.1308933 * memory_boundness - 0.0018929 * cpu_freq_scaling \
+                          // - 0.2420771 * ddr_freq_scaling - 30.7739177 * pow(memory_boundness, 2) - 0.6263244 * memory_boundness * cpu_freq_scaling \
+                          // + 0.0168092 * pow(cpu_freq_scaling, 2) + 3.5389818 * memory_boundness * ddr_freq_scaling \
+                          // - 0.039597 * cpu_freq_scaling * ddr_freq_scaling + 0.0744132 * pow(ddr_freq_scaling, 2) + 0.1485836);
+                          ptt_value_newfreq = highest_ticks * ((1-memory_boundness) * cpu_freq_scaling - 1.3227937 * memory_boundness + 0.0945313 * cpu_freq_scaling \
+                          +0.0407899 * ddr_freq_scaling - 0.328293 * memory_boundness * cpu_freq_scaling + 2.7087046 * memory_boundness * ddr_freq_scaling \
+                          - 0.039641 * cpu_freq_scaling * ddr_freq_scaling - 0.1284175);
 #endif
 // #ifdef DEBUG
 //                           LOCK_ACQUIRE(output_lck);
@@ -1807,8 +1814,11 @@ int worker_loop(int nthread){
                           - 0.5995333 * memory_boundness * ddrfreq - 0.0029895 * cpufreq * ddrfreq + 0.8006888 * pow(ddrfreq, 2) + 0.6209039;
                         }
                         if(width == 2){ /*Denver, width=2*/
-                          ddrpower = 11.8840022 * memory_boundness + 0.2207538 * cpufreq - 1.1475948 * ddrfreq - 23.7916345 * pow(memory_boundness, 2) + 8.7131834 * memory_boundness * cpufreq - 0.0871027 * pow(cpufreq, 2) \
-                          - 1.9651515 * memory_boundness * ddrfreq + 0.0243026 * cpufreq * ddrfreq + 0.7311884 * pow(ddrfreq, 2) + 0.5285202;
+                          //ddrpower = 11.8840022 * memory_boundness + 0.2207538 * cpufreq - 1.1475948 * ddrfreq - 23.7916345 * pow(memory_boundness, 2) + 8.7131834 * memory_boundness * cpufreq - 0.0871027 * pow(cpufreq, 2) \
+                          //- 1.9651515 * memory_boundness * ddrfreq + 0.0243026 * cpufreq * ddrfreq + 0.7311884 * pow(ddrfreq, 2) + 0.5285202;
+			  ddrpower = 11.9390059 * memory_boundness + 0.224722 * cpufreq - 1.1527272 * ddrfreq - 24.7881921 * pow(memory_boundness, 2) + 8.704204 * memory_boundness * cpufreq - 0.0864551 * pow(cpufreq, 2) \
+                          - 1.9467908 * memory_boundness * ddrfreq + 0.0211395 * cpufreq * ddrfreq + 0.7337044 * pow(ddrfreq, 2) + 0.5295545;
+			  //ddrpower = 10.075838 * memory_boundness - 0.0133797 * cpufreq + 0.8017427 * ddrfreq + 8.7131834 * memory_boundness * cpufreq - 1.9651515 * memory_boundness * ddrfreq + 0.0243026 * cpufreq * ddrfreq - 0.5452121;
                         }
 #endif
 #if defined DDR_Power_Model_4
@@ -2720,8 +2730,7 @@ int worker_loop(int nthread){
             }
           }
         }
-        //EAS
-        if(Sched == 1){
+        if(Sched == 1){ /* ERASE && STEER && JOSS */
 #if defined(TX2)
 // #ifndef MultipleKernels
 //         	if(!ptt_full){
@@ -2748,25 +2757,24 @@ int worker_loop(int nthread){
 //             }
 //           }else
 // #endif
-          // { 
-          	/* [EAS] Only steal tasks from same cluster */
-// #ifdef EDP_TEST_
-//             if(global_training == true){
-//               do{
-//                 random_core = (rand_r(&seed) % gotao_nthreads);
-//               } while(random_core == nthread);
-//             }else{
-//               if(nthread < 2){
-//                 do{
-//                   random_core = (rand_r(&seed) % (START_A - START_D));
-//                 } while(random_core == nthread);
-//               }else{
-//                 do{
-//                   random_core = START_A + (rand_r(&seed) % (gotao_nthreads - START_A));
-//                 }while(random_core == nthread); 
-//               }
-//             }          
-// #else
+          // {          	
+#ifdef JOSS_RWS  /* [JOSS - EDP test: Energy Minimization per task + Random work stealing] */
+            if(global_training == true){
+              do{
+                random_core = (rand_r(&seed) % gotao_nthreads);
+              } while(random_core == nthread);
+            }else{
+              if(nthread < 2){
+                do{
+                  random_core = (rand_r(&seed) % (START_A - START_D));
+                } while(random_core == nthread);
+              }else{
+                do{
+                  random_core = START_A + (rand_r(&seed) % (gotao_nthreads - START_A));
+                }while(random_core == nthread); 
+              }
+            }          
+#else /* [JOSS - default] Only steal tasks from same cluster */
             if(nthread < 2){
             	do{
               	random_core = (rand_r(&seed) % (START_A - START_D));
@@ -2776,7 +2784,7 @@ int worker_loop(int nthread){
               	random_core = START_A + (rand_r(&seed) % (gotao_nthreads - START_A));
             	}while(random_core == nthread); 
           	}
-// #endif
+#endif
 					// }    
         // }
 #endif
@@ -2815,9 +2823,18 @@ int worker_loop(int nthread){
         }
 
         if(Sched == 3){
-				  do{
-            random_core = (rand_r(&seed) % gotao_nthreads);
-          } while(random_core == nthread);
+	  //do{
+          //  random_core = (rand_r(&seed) % gotao_nthreads);
+          //} while(random_core == nthread);
+	  if(nthread < 2){
+            	do{
+              	random_core = (rand_r(&seed) % (START_A - START_D));
+            	} while(random_core == nthread);
+          	}else{
+         	  	do{
+              	random_core = START_A + (rand_r(&seed) % (gotao_nthreads - START_A));
+            	}while(random_core == nthread); 
+          	}
 				}
 
         LOCK_ACQUIRE(worker_lock[random_core]);
@@ -2916,7 +2933,14 @@ int worker_loop(int nthread){
             if((Sched == 0) || (Sched == 3)){
             // if((st->criticality == 0 && Sched == 0) ){
               worker_ready_q[random_core].pop_back();
+#ifdef ALLOWSTEALING
+              if(nthread >= 2){
+                st->leader = 2;
+                st->width = 2;
+              }
+#else
               st->leader = nthread /st->width * st->width;
+#endif
               tao_total_steals++;
             }else{
               st = NULL;

@@ -12,11 +12,13 @@
 #include "xitao.h"
 using namespace xitao;
 
-float VecAdd::time_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float VecMulDyn::time_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float VecAdd::time_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float VecMulDyn::time_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
 
-float VecAdd::power_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float VecMulDyn::power_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float VecAdd::cpu_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float VecMulDyn::cpu_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float VecAdd::ddr_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float VecMulDyn::ddr_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
 
 uint64_t VecAdd::cycle_table[NUMFREQ][NUMSOCKETS][XITAO_MAXTHREADS];
 uint64_t VecMulDyn::cycle_table[NUMFREQ][NUMSOCKETS][XITAO_MAXTHREADS];
@@ -30,11 +32,14 @@ bool VecMulDyn::time_table_state[NUMSOCKETS+1];
 bool VecAdd::best_config_state;
 bool VecMulDyn::best_config_state;
 
-bool VecAdd::enable_freq_change;
-bool VecMulDyn::enable_freq_change;
-
-int VecAdd::best_freqindex;
-int VecMulDyn::best_freqindex;
+bool VecAdd::enable_cpu_freq_change;
+bool VecMulDyn::enable_cpu_freq_change;
+bool VecAdd::enable_ddr_freq_change;
+bool VecMulDyn::enable_ddr_freq_change;
+int VecAdd::best_cpufreqindex;
+int VecMulDyn::best_cpufreqindex;
+int VecAdd::best_ddrfreqindex;
+int VecMulDyn::best_ddrfreqindex;
 
 int VecAdd::best_cluster;
 int VecMulDyn::best_cluster;

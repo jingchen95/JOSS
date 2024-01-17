@@ -14,7 +14,7 @@
 #define Performance_Model_Time    // Only use time to calculate memory-boundness
 //#define Performance_Model_Cycle // Use Cycles to calculate memory-boundness
 #define FINE_GRAIN_THRESHOLD 0.001
-#define NUM_TRAIN_TASKS 3
+#define NUM_TRAIN_TASKS 5
 #define START_D 0
 #define START_A 2
 #define NUM_AVAIL_FREQ 12
@@ -23,14 +23,28 @@
 
 //#define Model_Computation_Overhead // measure the time that consumed for populating the look-up tables, inc execution time and power tables
 //#define Search_Overhead // Measure the time that consumed by searching for the best config in poly_task.cpp
-#define Optimized_Search // Optimized searching method to reduce the searching space 
-//#define Exhastive_Search // Search for all possible configurations
+//#define Optimized_Search // Optimized searching method to reduce the searching space 
+#define Exhastive_Search // Search for all possible configurations
+
+// Scenario 1: We allow some % of performance slowdown for each task
+//#define perf_contraints  // Explore JOSS with performance contraints  
+//#define PERF_SLOWDOWN 0.1 // COnstraint: 0.1 means allowing 10% of performance slowdown, basedline is when running with highest frequency and all fastest core 
+
+// Scenario 2: Based on JOSS (minimizing energy) version, we specify how much performance improvement we want to achieve
+#define perf_improve
+#define PERF_SPEEDUP 1 // it means 1.2 times speedup based on JOSS default execution time
+
+//#define ALLOWSTEALING
+
+//#define AcrossCLustersTest // Allow stealing across clusters - starter, not the final version
+
+//#define JOSS_NoMemDVFS // Reducing the total energy consumption (inc. CPU+DDR) without mem DVFS 
 
 #define Performance_Model_3
 #define CPU_Power_Model_6
 #define DDR_Power_Model_3
 
-//#define EDP_TEST_  // Test minimize EDP per task
+//#define JOSS_RWS  // JOSS with Random work stealing
 
 //#define FineStrategyTest
 //#define FINE_GRAIN_THRESHOLD 0.0001

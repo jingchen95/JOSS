@@ -27,6 +27,10 @@ public:
   static int best_ddrfreqindex;
   static int best_cluster;
   static int best_width;
+  static int second_best_cpufreqindex;
+  static int second_best_ddrfreqindex;
+  static int second_best_cluster;
+  static int second_best_width;
   static std::atomic<int> PTT_UpdateFlag[NUMSOCKETS][XITAO_MAXTHREADS][XITAO_MAXTHREADS];
   static std::atomic<int> PTT_UpdateFinish[NUMSOCKETS][XITAO_MAXTHREADS][XITAO_MAXTHREADS];
 
@@ -181,6 +185,34 @@ public:
   }
   int get_best_numcores(){
     int wid = best_width;
+    return wid;
+  }
+  void set_second_best_cpu_freq(int cpu_freq_index){
+    second_best_cpufreqindex = cpu_freq_index;
+  }
+  void set_second_best_ddr_freq(int ddr_freq_index){
+    second_best_ddrfreqindex = ddr_freq_index;
+  }
+  void set_second_best_cluster(int clusterid){
+    second_best_cluster = clusterid;
+  }
+  void set_second_best_numcores(int width){
+    second_best_width = width;
+  }
+  int get_second_best_cpu_freq(){
+    int freq_indx = second_best_cpufreqindex;
+    return freq_indx;
+  }
+  int get_second_best_ddr_freq(){
+    int ddr_freq_indx = second_best_ddrfreqindex;
+    return ddr_freq_indx;
+  }
+  int get_second_best_cluster(){
+    int clu_id = second_best_cluster;
+    return clu_id;
+  }
+  int get_second_best_numcores(){
+    int wid = second_best_width;
     return wid;
   }
 private:

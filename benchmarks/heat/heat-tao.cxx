@@ -34,39 +34,34 @@ struct loi_kernel_info heat_kernels = {
 
 #endif
 
-float copy2D::time_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float jacobi2D::time_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-
-float copy2D::power_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-float jacobi2D::power_table[NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-
+float copy2D::time_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float jacobi2D::time_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float copy2D::cpu_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float jacobi2D::cpu_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float copy2D::ddr_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
+float jacobi2D::ddr_power_table[NUM_DDR_AVAIL_FREQ][NUM_AVAIL_FREQ][NUMSOCKETS][XITAO_MAXTHREADS];
 uint64_t copy2D::cycle_table[NUMFREQ][NUMSOCKETS][XITAO_MAXTHREADS];
 uint64_t jacobi2D::cycle_table[NUMFREQ][NUMSOCKETS][XITAO_MAXTHREADS];
-
 float copy2D::mb_table[NUMSOCKETS][XITAO_MAXTHREADS];
 float jacobi2D::mb_table[NUMSOCKETS][XITAO_MAXTHREADS];
-
 bool copy2D::time_table_state[NUMSOCKETS+1];
 bool jacobi2D::time_table_state[NUMSOCKETS+1];
-
 bool copy2D::best_config_state;
 bool jacobi2D::best_config_state;
-
-bool copy2D::enable_freq_change;
-bool jacobi2D::enable_freq_change;
-
-int copy2D::best_freqindex;
-int jacobi2D::best_freqindex;
-
+bool copy2D::enable_cpu_freq_change;
+bool jacobi2D::enable_cpu_freq_change;
+bool copy2D::enable_ddr_freq_change;
+bool jacobi2D::enable_ddr_freq_change;
+int copy2D::best_cpufreqindex;
+int jacobi2D::best_cpufreqindex;
+int copy2D::best_ddrfreqindex;
+int jacobi2D::best_ddrfreqindex;
 int copy2D::best_cluster;
 int jacobi2D::best_cluster;
-
 int copy2D::best_width;
 int jacobi2D::best_width;
-
 std::atomic<int> copy2D::PTT_UpdateFlag[NUMSOCKETS][XITAO_MAXTHREADS][XITAO_MAXTHREADS];
 std::atomic<int> jacobi2D::PTT_UpdateFlag[NUMSOCKETS][XITAO_MAXTHREADS][XITAO_MAXTHREADS];
-
 std::atomic<int> copy2D::PTT_UpdateFinish[NUMSOCKETS][XITAO_MAXTHREADS][XITAO_MAXTHREADS];
 std::atomic<int> jacobi2D::PTT_UpdateFinish[NUMSOCKETS][XITAO_MAXTHREADS][XITAO_MAXTHREADS];
 
